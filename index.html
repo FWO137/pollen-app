@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pollenflug — Süddeutschland & Österreich</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f7f5f1;
+      --surface: #ffffff;
+      --surface-2: #f0ede7;
+      --border: rgba(0,0,0,0.09);
+      --border-md: rgba(0,0,0,0.13);
+      --text-1: #111111;
+      --text-2: #555555;
+      --text-3: #9e9e9e;
+      --green: #3d7a55;
+      --green-alpha-10: rgba(61,122,85,0.10);
+      --green-alpha-30: rgba(61,122,85,0.30);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Helvetica Neue', sans-serif;
+      background: var(--bg);
+      color: var(--text-1);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .app {
+      max-width: 660px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+    }
+
+    /* ── Header ────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 36px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      background: var(--green);
+      border-radius: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 19px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(61,122,85,0.25);
+    }
+
+    .brand-text h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-text p {
+      font-size: 12px;
+      color: var(--text-3);
+      margin-top: 2px;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .location-select {
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--surface);
+      border: 1.5px solid var(--border-md);
+      border-radius: 10px;
+      padding: 9px 32px 9px 13px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-1);
+      font-family: inherit;
+      cursor: pointer;
+      min-width: 152px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23777' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .location-select:hover { border-color: var(--green); }
+
+    .location-select:focus {
+      outline: none;
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px var(--green-alpha-10);
+    }
+
+    .geo-btn {
+      width: 38px;
+      height: 38px;
+      border: 1.5px solid var(--border-md);
+      background: var(--surface);
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-2);
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .geo-btn:hover {
+      border-color: var(--green);
+      background: var(--green-alpha-10);
+      color: var(--green);
+    }
+
+    .geo-btn.loading { opacity: 0.45; pointer-events: none; }
+
+    /* ── Day Tabs ──────────────────────────────────── */
+    .day-tabs {
+      display: flex;
+      background: var(--surface);
+      border: 1.5px solid var(--border-md);
+      border-radius: 14px;
+      padding: 5px;
+      gap: 4px;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 10px 8px;
+      border: none;
+      background: transparent;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-2);
+      cursor: pointer;
+      line-height: 1.2;
+      transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+    }
+
+    .tab:hover:not(.active) {
+      background: var(--bg);
+      color: var(--text-1);
+    }
+
+    .tab.active {
+      background: var(--green);
+      color: #fff;
+      box-shadow: 0 2px 8px var(--green-alpha-30);
+    }
+
+    .tab-sub {
+      font-size: 11px;
+      font-weight: 400;
+      opacity: 0.65;
+    }
+
+    /* ── Summary Banner ────────────────────────────── */
+    .summary {
+      background: var(--surface);
+      border: 1.5px solid var(--border-md);
+      border-radius: 14px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .summary-left {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .summary-dot {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .summary-text strong {
+      font-size: 15px;
+      font-weight: 700;
+      display: block;
+      letter-spacing: -0.1px;
+    }
+
+    .summary-text span {
+      font-size: 12.5px;
+      color: var(--text-2);
+    }
+
+    .summary-right {
+      font-size: 12px;
+      color: var(--text-3);
+      text-align: right;
+      line-height: 1.5;
+    }
+
+    .summary-right strong {
+      color: var(--text-2);
+      font-weight: 600;
+    }
+
+    /* ── Pollen Grid ───────────────────────────────── */
+    .pollen-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* ── Pollen Card ───────────────────────────────── */
+    .pollen-card {
+      background: var(--surface);
+      border: 1.5px solid var(--border-md);
+      border-radius: 14px;
+      padding: 18px;
+      transition: transform 0.18s, box-shadow 0.18s;
+      animation: fadeUp 0.35s ease both;
+    }
+
+    .pollen-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.07);
+    }
+
+    .pollen-card:nth-child(1)  { animation-delay:   0ms; }
+    .pollen-card:nth-child(2)  { animation-delay:  40ms; }
+    .pollen-card:nth-child(3)  { animation-delay:  80ms; }
+    .pollen-card:nth-child(4)  { animation-delay: 120ms; }
+    .pollen-card:nth-child(5)  { animation-delay: 160ms; }
+    .pollen-card:nth-child(6)  { animation-delay: 200ms; }
+    .pollen-card:nth-child(7)  { animation-delay: 240ms; }
+    .pollen-card:nth-child(8)  { animation-delay: 280ms; }
+    .pollen-card:nth-child(9)  { animation-delay: 320ms; }
+    .pollen-card:nth-child(10) { animation-delay: 360ms; }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .card-name {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      line-height: 1.1;
+    }
+
+    .card-en {
+      font-size: 12px;
+      color: var(--text-3);
+      margin-top: 3px;
+    }
+
+    .card-season {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 2px;
+    }
+
+    .card-icon { font-size: 22px; line-height: 1; }
+
+    .card-value-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .card-value {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: -1.5px;
+      line-height: 1;
+      transition: color 0.3s;
+    }
+
+    .card-unit { font-size: 13px; color: var(--text-3); }
+    .card-conc { font-size: 11px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
+
+    .level-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .level-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: color 0.3s;
+    }
+
+    .level-track {
+      flex: 1;
+      height: 4px;
+      background: var(--surface-2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .level-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.55s cubic-bezier(0.4,0,0.2,1), background 0.3s;
+    }
+
+    /* ── Level States ──────────────────────────────── */
+    .l-none .card-value  { color: var(--text-3); }
+    .l-none .level-label { color: var(--text-3); }
+    .l-none .level-fill  { background: #d4d4d4; } /* width driven by JS pct */
+    .dot-none            { background: #d4d4d4; }
+
+    .l-low .card-value   { color: #1e8a4a; }
+    .l-low .level-label  { color: #1e8a4a; }
+    .l-low .level-fill   { background: #25a85a; }
+    .dot-low             { background: #25a85a; }
+
+    .l-medium .card-value  { color: #b07d00; }
+    .l-medium .level-label { color: #b07d00; }
+    .l-medium .level-fill  { background: #f0b429; }
+    .dot-medium            { background: #f0b429; }
+
+    .l-high .card-value  { color: #bc4f00; }
+    .l-high .level-label { color: #bc4f00; }
+    .l-high .level-fill  { background: #f07200; }
+    .dot-high            { background: #f07200; }
+
+    .l-very-high .card-value  { color: #b52b22; }
+    .l-very-high .level-label { color: #b52b22; }
+    .l-very-high .level-fill  { background: #e03030; }
+    .dot-very-high            { background: #e03030; }
+
+    /* ── No-data Card ──────────────────────────────── */
+    .l-nodata {
+      opacity: 0.48;
+      border-style: dashed;
+    }
+
+    .l-nodata:hover { transform: none; box-shadow: none; }
+
+    .card-nodata {
+      font-size: 12px;
+      color: var(--text-3);
+      padding: 14px 0 2px;
+      font-style: italic;
+    }
+
+    /* ── Loading / Error ───────────────────────────── */
+    .state-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 72px 0;
+      gap: 14px;
+    }
+
+    .spinner {
+      width: 30px;
+      height: 30px;
+      border: 2.5px solid var(--border-md);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0);    }
+    }
+
+    .state-view p { font-size: 14px; color: var(--text-2); text-align: center; }
+
+    /* ── Footer ────────────────────────────────────── */
+    .footer {
+      margin-top: 36px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-3);
+      line-height: 1.8;
+    }
+
+    .footer a { color: var(--green); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+
+    /* ── Responsive ────────────────────────────────── */
+    @media (max-width: 460px) {
+      .app { padding: 24px 16px 60px; }
+      .pollen-grid { grid-template-columns: 1fr; }
+      .brand-text h1 { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+
+    <header class="header">
+      <div class="brand">
+        <div class="brand-mark">🌿</div>
+        <div class="brand-text">
+          <h1>Pollenflug</h1>
+          <p>Süddeutschland &amp; Österreich</p>
+        </div>
+      </div>
+      <div class="header-controls">
+        <select class="location-select" id="locationSelect">
+          <optgroup label="Bayern &amp; Baden-Württemberg">
+            <option value="pfarrkirchen">Pfarrkirchen</option>
+            <option value="munich">München</option>
+            <option value="nuremberg">Nürnberg</option>
+            <option value="augsburg">Augsburg</option>
+            <option value="ingolstadt">Ingolstadt</option>
+            <option value="regensburg">Regensburg</option>
+            <option value="stuttgart">Stuttgart</option>
+            <option value="freiburg">Freiburg</option>
+            <option value="ulm">Ulm</option>
+            <option value="constance">Konstanz</option>
+          </optgroup>
+          <optgroup label="Österreich">
+            <option value="vienna">Wien</option>
+            <option value="salzburg">Salzburg</option>
+            <option value="innsbruck">Innsbruck</option>
+            <option value="graz">Graz</option>
+            <option value="linz">Linz</option>
+            <option value="klagenfurt">Klagenfurt</option>
+            <option value="bregenz">Bregenz</option>
+          </optgroup>
+        </select>
+        <button class="geo-btn" id="geoBtn" title="Aktuellen Standort verwenden">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="day-tabs" id="dayTabs">
+      <button class="tab active" data-day="0">
+        Heute <span class="tab-sub" id="tabDate0"></span>
+      </button>
+      <button class="tab" data-day="1">
+        Morgen <span class="tab-sub" id="tabDate1"></span>
+      </button>
+      <button class="tab" data-day="2">
+        Übermorgen <span class="tab-sub" id="tabDate2"></span>
+      </button>
+    </div>
+
+    <div class="summary" id="summary" style="display:none;"></div>
+    <div id="content"></div>
+
+    <footer class="footer">
+      Deutschland: <a href="https://www.dwd.de" target="_blank" rel="noopener">DWD</a> Pollenflugindex (0 – 3) &middot;
+      Österreich: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (Körner/m³)<br>
+      Kein Ersatz für ärztlichen Rat
+    </footer>
+
+  </div>
+
+  <script>
+  // ─── Locations — DE cities carry a DWD partregion_id and nearest LGL station ─
+  const LOCATIONS = {
+    pfarrkirchen: { name: 'Pfarrkirchen', lat: 48.4320, lon: 12.9386, country: 'DE', dwd: 122, lgl: 'DEALTO' },
+    munich:       { name: 'München',      lat: 48.1351, lon: 11.5820, country: 'DE', dwd: 121, lgl: 'DEMUNC' },
+    nuremberg:    { name: 'Nürnberg',     lat: 49.4521, lon: 11.0767, country: 'DE', dwd: 123, lgl: 'DEFEUC' },
+    augsburg:     { name: 'Augsburg',     lat: 48.3705, lon: 10.8978, country: 'DE', dwd: 121, lgl: 'DEMIND' },
+    ingolstadt:   { name: 'Ingolstadt',   lat: 48.7665, lon: 11.4258, country: 'DE', dwd: 121, lgl: 'DEMUNC' },
+    regensburg:   { name: 'Regensburg',   lat: 49.0134, lon: 12.1016, country: 'DE', dwd: 123, lgl: 'DEVIEC' },
+    stuttgart:    { name: 'Stuttgart',    lat: 48.7758, lon:  9.1829, country: 'DE', dwd: 112, lgl: null     },
+    freiburg:     { name: 'Freiburg',     lat: 47.9990, lon:  7.8421, country: 'DE', dwd: 111, lgl: null     },
+    ulm:          { name: 'Ulm',          lat: 48.4011, lon:  9.9876, country: 'DE', dwd: 112, lgl: 'DEMIND' },
+    constance:    { name: 'Konstanz',     lat: 47.6631, lon:  9.1756, country: 'DE', dwd: 112, lgl: null     },
+    vienna:       { name: 'Wien',         lat: 48.2082, lon: 16.3738, country: 'AT', dwd: null, lgl: null    },
+    salzburg:     { name: 'Salzburg',     lat: 47.8095, lon: 13.0550, country: 'AT', dwd: null, lgl: null    },
+    innsbruck:    { name: 'Innsbruck',    lat: 47.2692, lon: 11.4041, country: 'AT', dwd: null, lgl: null    },
+    graz:         { name: 'Graz',         lat: 47.0707, lon: 15.4395, country: 'AT', dwd: null, lgl: null    },
+    linz:         { name: 'Linz',         lat: 48.3069, lon: 14.2858, country: 'AT', dwd: null, lgl: null    },
+    klagenfurt:   { name: 'Klagenfurt',   lat: 46.6228, lon: 14.3051, country: 'AT', dwd: null, lgl: null    },
+    bregenz:      { name: 'Bregenz',      lat: 47.5031, lon:  9.7471, country: 'AT', dwd: null, lgl: null    },
+  };
+
+  // ─── 10 Pollen types, ordered by season ─────────────────────────────────────
+  // dwd: key in DWD Pollen object  |  om: Open-Meteo variable name
+  const POLLEN = [
+    { key: 'hazel',   name: 'Hasel',    en: 'Hazel',   season: 'Jan – Mär', icon: '🌰', dwd: 'Hasel',    om: null              },
+    { key: 'alder',   name: 'Erle',     en: 'Alder',   season: 'Jan – Apr', icon: '🌳', dwd: 'Erle',     om: 'alder_pollen'    },
+    { key: 'ash',     name: 'Esche',    en: 'Ash',     season: 'Mär – Mai', icon: '🌿', dwd: 'Esche',    om: null              },
+    { key: 'birch',   name: 'Birke',    en: 'Birch',   season: 'Apr – Mai', icon: '🌲', dwd: 'Birke',    om: 'birch_pollen'    },
+    { key: 'plane',   name: 'Platane',  en: 'Plane',   season: 'Apr – Mai', icon: '🌴', dwd: null,       om: null              },
+    { key: 'olive',   name: 'Olive',    en: 'Olive',   season: 'Mai – Jun', icon: '🫒', dwd: null,       om: 'olive_pollen'    },
+    { key: 'grass',   name: 'Gräser',   en: 'Grass',   season: 'Mai – Sep', icon: '🌾', dwd: 'Graeser',  om: 'grass_pollen'    },
+    { key: 'rye',     name: 'Roggen',   en: 'Rye',     season: 'Mai – Jun', icon: '🌻', dwd: 'Roggen',   om: null              },
+    { key: 'mugwort', name: 'Beifuß',   en: 'Mugwort', season: 'Jul – Sep', icon: '🍃', dwd: 'Beifuss',  om: 'mugwort_pollen'  },
+    { key: 'ragweed', name: 'Ambrosia', en: 'Ragweed', season: 'Aug – Okt', icon: '🌱', dwd: 'Ambrosia', om: 'ragweed_pollen'  },
+  ];
+
+  // LGL Bayern ePIN — pollen type name → app key
+  const LGL_MAP = {
+    Alnus: 'alder', Betula: 'birch', Platanus: 'plane', Fraxinus: 'ash',
+    Corylus: 'hazel', Poaceae: 'grass', Secale: 'rye',
+    Artemisia: 'mugwort', Ambrosia: 'ragweed',
+  };
+
+  // LGL thresholds [low, medium, high, very-high] in grains/m³
+  // Based on German standard pollen load categories (Stiftung Dt. Polleninformation)
+  const LGL_THR = {
+    Alnus:    [1,  20, 200, 1000],
+    Betula:   [1,  20, 200, 1000],
+    Platanus: [1,  20, 200, 1000],
+    Fraxinus: [1,  20, 200, 1000],
+    Corylus:  [1,  20, 200, 1000],
+    Poaceae:  [1,  10, 100,  500],
+    Secale:   [1,  10, 100,  500],
+    Artemisia:[1,  20, 200, 1000],
+    Ambrosia: [1,  10,  50,  200],
+  };
+
+  // Open-Meteo concentration thresholds [low, medium, high] in grains/m³
+  const OM_THR = {
+    alder_pollen:   [15,  90,  500],
+    birch_pollen:   [15,  90, 1500],
+    grass_pollen:   [10,  50,  200],
+    mugwort_pollen: [10,  50,  200],
+    ragweed_pollen: [10,  50,  200],
+    olive_pollen:   [10,  50,  200],
+  };
+
+  // DWD string value → level + numeric display
+  const DWD_MAP = {
+    '0':   { level: 'none',   num: 0   },
+    '0-1': { level: 'low',    num: 0.5 },
+    '1':   { level: 'low',    num: 1   },
+    '1-2': { level: 'medium', num: 1.5 },
+    '2':   { level: 'medium', num: 2   },
+    '2-3': { level: 'high',   num: 2.5 },
+    '3':   { level: 'high',   num: 3   },
+  };
+
+  const LEVELS     = ['none', 'low', 'medium', 'high', 'very-high'];
+  const LEVEL_DE   = { none: 'Kein Flug', low: 'Niedrig', medium: 'Mittel', high: 'Hoch', 'very-high': 'Sehr hoch' };
+  const SUMMARY_DE = { none: 'Kaum Belastung', low: 'Geringe Belastung', medium: 'Mittlere Belastung', high: 'Hohe Belastung', 'very-high': 'Sehr hohe Belastung' };
+
+  // ─── State ───────────────────────────────────────────────────────────────────
+  const state = {
+    locationKey: 'pfarrkirchen',
+    selectedDay: 0,
+    data: null,
+    customCoords: null,
+  };
+
+  let dwdCache = null; // DWD JSON is fetched once per session
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  function highestLevel(levels) {
+    return levels.reduce((best, l) => {
+      return LEVELS.indexOf(l) > LEVELS.indexOf(best) ? l : best;
+    }, 'none');
+  }
+
+  function fmtDate(dateStr) {
+    if (!dateStr) return '';
+    return new Date(dateStr + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  }
+
+  // ─── DWD API ─────────────────────────────────────────────────────────────────
+  // opendata.dwd.de has no CORS headers — route through cors.eu.org proxy.
+  // On Netlify the _redirects rule intercepts /dwd-api server-side (no proxy needed);
+  // on all other hosts (GitHub Pages, localhost, file://) cors.eu.org is used.
+  const DWD_URL = 'https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json';
+  function dwdFetchUrl() {
+    return location.hostname.endsWith('.netlify.app') || location.hostname.endsWith('.netlify.com')
+      ? '/dwd-api'
+      : `https://cors.eu.org/${DWD_URL}`;
+  }
+
+  async function fetchDWD() {
+    if (dwdCache) return dwdCache;
+    const r = await fetch(dwdFetchUrl());
+    if (!r.ok) throw new Error('DWD ' + r.status);
+    dwdCache = await r.json();
+    return dwdCache;
+  }
+
+  function parseDwdVal(str) {
+    if (!str || str === '-1') return null;
+    const e = DWD_MAP[str];
+    if (!e) return null;
+    const display = Number.isInteger(e.num) ? String(e.num) : e.num.toFixed(1);
+    const pct = Math.round(e.num / 3 * 100); // 0 → 0 %, 3 → 100 %
+    return { level: e.level, display, unit: '/ 3', source: 'dwd', pct };
+  }
+
+  function extractDWDDays(raw, partregionId) {
+    const region = raw.content.find(r => r.partregion_id === partregionId);
+    if (!region) return null;
+
+    // Derive base date from "last_update": "2026-04-01 11:00 Uhr"
+    const base = new Date(raw.last_update.split(' ')[0] + 'T12:00:00');
+    const p = region.Pollen;
+
+    return ['today', 'tomorrow', 'dayafter_to'].map((field, i) => {
+      const d = new Date(base);
+      d.setDate(d.getDate() + i);
+      return {
+        date: d.toISOString().split('T')[0],
+        dwd: {
+          hazel:   parseDwdVal(p.Hasel?.[field]),
+          alder:   parseDwdVal(p.Erle?.[field]),
+          ash:     parseDwdVal(p.Esche?.[field]),
+          birch:   parseDwdVal(p.Birke?.[field]),
+          grass:   parseDwdVal(p.Graeser?.[field]),
+          rye:     parseDwdVal(p.Roggen?.[field]),
+          mugwort: parseDwdVal(p.Beifuss?.[field]),
+          ragweed: parseDwdVal(p.Ambrosia?.[field]),
+        },
+      };
+    });
+  }
+
+  // ─── Open-Meteo API ───────────────────────────────────────────────────────────
+  async function fetchOM(lat, lon) {
+    const vars = POLLEN.filter(p => p.om).map(p => p.om).join(',');
+    const url = `https://air-quality-api.open-meteo.com/v1/air-quality`
+      + `?latitude=${lat}&longitude=${lon}&hourly=${vars}&timezone=auto&forecast_days=3`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Open-Meteo ' + r.status);
+    return r.json();
+  }
+
+  function processOM(raw) {
+    const times = raw.hourly.time;
+    const byDay = {};
+
+    for (let i = 0; i < times.length; i++) {
+      const date = times[i].split('T')[0];
+      if (!byDay[date]) byDay[date] = { date };
+      for (const p of POLLEN) {
+        if (!p.om) continue;
+        const v = raw.hourly[p.om]?.[i] ?? 0;
+        byDay[date][p.key] = Math.max(byDay[date][p.key] ?? 0, v || 0);
+      }
+    }
+
+    return Object.values(byDay)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(day => {
+        const om = {};
+        for (const p of POLLEN) {
+          if (!p.om) continue;
+          const v = day[p.key] || 0;
+          const thr = OM_THR[p.om] || [10, 50, 200];
+          const level = v < 0.5 ? 'none'
+            : v < thr[0] ? 'low'
+            : v < thr[1] ? 'medium'
+            : v < thr[2] ? 'high' : 'very-high';
+          const display = v < 1 ? '0' : Math.round(v).toLocaleString('de-DE');
+          // Zone-linear pct: each level band gets 1/3 of the bar
+          const thr2 = OM_THR[p.om] || [10, 50, 200];
+          let pct;
+          if (v < 0.5)      pct = 0;
+          else if (v < thr2[0]) pct = Math.round((v / thr2[0]) * 33);
+          else if (v < thr2[1]) pct = Math.round(33 + (v - thr2[0]) / (thr2[1] - thr2[0]) * 33);
+          else               pct = Math.min(Math.round(66 + (v - thr2[1]) / (thr2[2] - thr2[1]) * 34), 100);
+          om[p.key] = { level, display, unit: 'K/m³', source: 'om', pct };
+        }
+        return { date: day.date, om };
+      });
+  }
+
+  // ─── LGL Bayern ePIN API ─────────────────────────────────────────────────────
+  // Provides measured (not forecast) pollen concentrations for today only.
+  // 8 automated stations in Bavaria, 41 pollen types including Platanus.
+  const LGL_URL = 'https://epin.lgl.bayern.de/api/measurements';
+  function lglFetchUrl() {
+    return location.hostname.endsWith('.netlify.app') || location.hostname.endsWith('.netlify.com')
+      ? '/lgl-api'
+      : `https://cors.eu.org/${LGL_URL}`;
+  }
+  let lglCache = null;
+  async function fetchLGL() {
+    if (lglCache) return lglCache;
+    const r = await fetch(lglFetchUrl());
+    if (!r.ok) throw new Error('LGL ' + r.status);
+    lglCache = await r.json();
+    return lglCache;
+  }
+
+  function processLGL(raw, stationId) {
+    const result = {};
+    for (const m of raw.measurements) {
+      if (m.location !== stationId) continue;
+      const appKey = LGL_MAP[m.polle];
+      if (!appKey) continue;
+      const maxVal = Math.max(...m.data.map(d => d.value || 0));
+      const thr = LGL_THR[m.polle] || [1, 20, 200, 1000];
+      const level = maxVal < thr[0] ? 'none'
+        : maxVal < thr[1] ? 'low'
+        : maxVal < thr[2] ? 'medium'
+        : maxVal < thr[3] ? 'high' : 'very-high';
+      const display = maxVal < 1 ? '0' : Math.round(maxVal).toLocaleString('de-DE');
+      let pct;
+      if (maxVal < thr[0])      pct = Math.round((maxVal / thr[0]) * 33);
+      else if (maxVal < thr[1]) pct = Math.round(33 + (maxVal - thr[0]) / (thr[1] - thr[0]) * 33);
+      else if (maxVal < thr[2]) pct = Math.round(66 + (maxVal - thr[1]) / (thr[2] - thr[1]) * 17);
+      else                      pct = Math.min(Math.round(83 + (maxVal - thr[2]) / (thr[3] - thr[2]) * 17), 100);
+      result[appKey] = { level, display, unit: 'K/m³', source: 'lgl', pct };
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  }
+
+  // ─── Merge: LGL (today, measured) > DWD (forecast) > OM (fallback) ──────────
+  function buildDays(dwdDays, omDays, lglToday = null) {
+    const len = Math.max(dwdDays?.length ?? 0, omDays?.length ?? 0, 3);
+    return Array.from({ length: len }, (_, i) => {
+      const dwd  = dwdDays?.[i]?.dwd;
+      const om   = omDays?.[i]?.om;
+      const lgl  = i === 0 ? lglToday : null; // LGL only for today (measured data)
+      const date = dwdDays?.[i]?.date ?? omDays?.[i]?.date;
+      const pollens = {};
+
+      for (const p of POLLEN) {
+        if (lgl?.[p.key] != null) {
+          pollens[p.key] = lgl[p.key];           // LGL measured: highest priority
+        } else if (dwd?.[p.key] != null) {
+          const entry = { ...dwd[p.key] };
+          if (om?.[p.key]) entry.omDisplay = om[p.key].display;
+          pollens[p.key] = entry;                 // DWD forecast: priority for DE
+        } else if (om?.[p.key] != null) {
+          pollens[p.key] = om[p.key];             // OM: fallback (Olive, AT cities)
+        } else {
+          pollens[p.key] = null;
+        }
+      }
+
+      return { date, pollens };
+    });
+  }
+
+  // ─── Load ────────────────────────────────────────────────────────────────────
+  async function loadData() {
+    showLoading();
+    const loc = state.customCoords
+      ? { ...state.customCoords, country: LOCATIONS[state.locationKey]?.country ?? 'DE', dwd: null, lgl: null }
+      : LOCATIONS[state.locationKey];
+
+    try {
+      let dwdDays = null;
+      let omDays  = null;
+      let lglToday = null;
+      const lglStation = loc.lgl ?? null;
+
+      if (loc.country === 'DE' && loc.dwd != null) {
+        // German city: DWD forecast + OM + LGL measured (today), all in parallel
+        const [dwdResult, omResult, lglResult] = await Promise.allSettled([
+          fetchDWD().then(raw => extractDWDDays(raw, loc.dwd)),
+          fetchOM(loc.lat, loc.lon).then(processOM),
+          lglStation ? fetchLGL().then(raw => processLGL(raw, lglStation)) : Promise.resolve(null),
+        ]);
+        dwdDays  = dwdResult.status  === 'fulfilled' ? dwdResult.value  : null;
+        omDays   = omResult.status   === 'fulfilled' ? omResult.value   : null;
+        lglToday = lglResult.status  === 'fulfilled' ? lglResult.value  : null;
+        if (dwdDays === null && omDays === null && lglToday === null)
+          throw new Error('Alle Datenquellen nicht verfügbar');
+      } else {
+        // Austrian city or custom coords: OM only (6 types; Hasel/Esche/Roggen/Platane show no data)
+        const omRaw = await fetchOM(loc.lat, loc.lon);
+        omDays = processOM(omRaw);
+      }
+
+      state.data = buildDays(dwdDays, omDays, lglToday);
+      render();
+    } catch (err) {
+      showError(err.message);
+    }
+  }
+
+  // ─── Render ──────────────────────────────────────────────────────────────────
+  function showLoading() {
+    document.getElementById('summary').style.display = 'none';
+    document.getElementById('content').innerHTML = `
+      <div class="state-view">
+        <div class="spinner"></div>
+        <p>Pollendaten werden geladen …</p>
+      </div>`;
+  }
+
+  function showError(msg) {
+    document.getElementById('summary').style.display = 'none';
+    document.getElementById('content').innerHTML = `
+      <div class="state-view">
+        <p style="font-size:28px;">⚠️</p>
+        <p>Daten konnten nicht geladen werden.</p>
+        <p style="color:var(--text-3);font-size:12px;">${msg}</p>
+      </div>`;
+  }
+
+  function render() {
+    if (!state.data?.length) return showError('Keine Daten verfügbar');
+    const dayData = state.data[state.selectedDay];
+    if (!dayData) return showError('Prognosedaten nicht verfügbar');
+
+    // Update tab date labels from actual data dates
+    state.data.forEach((day, i) => {
+      const el = document.getElementById(`tabDate${i}`);
+      if (el && day?.date) el.textContent = fmtDate(day.date);
+    });
+
+    // Compute overall level from pollen types that have data
+    const levelsWithData = POLLEN
+      .filter(p => dayData.pollens[p.key] !== null)
+      .map(p => dayData.pollens[p.key]?.level ?? 'none');
+    const overall = highestLevel(levelsWithData);
+
+    // Find dominant pollen (highest level, data only)
+    let dominant = null, domIdx = -1;
+    for (const p of POLLEN) {
+      const entry = dayData.pollens[p.key];
+      if (!entry) continue;
+      const idx = LEVELS.indexOf(entry.level);
+      if (idx > domIdx) { domIdx = idx; dominant = p; }
+    }
+
+    // Summary banner
+    const summaryEl = document.getElementById('summary');
+    summaryEl.style.display = 'flex';
+    summaryEl.innerHTML = `
+      <div class="summary-left">
+        <div class="summary-dot dot-${overall}"></div>
+        <div class="summary-text">
+          <strong>${SUMMARY_DE[overall]}</strong>
+          <span>${fmtDate(dayData.date)}</span>
+        </div>
+      </div>
+      <div class="summary-right">
+        ${dominant && domIdx > 0
+          ? `Hauptbelastung<br><strong>${dominant.name}</strong>`
+          : 'Keine aktiven Pollen'}
+      </div>`;
+
+    // Pollen grid
+    const grid = document.createElement('div');
+    grid.className = 'pollen-grid';
+
+    for (const p of POLLEN) {
+      const entry = dayData.pollens[p.key];
+      const card  = document.createElement('div');
+
+      if (!entry) {
+        card.className = 'pollen-card l-nodata';
+        card.innerHTML = `
+          <div class="card-top">
+            <div>
+              <div class="card-name">${p.name}</div>
+              <div class="card-en">${p.en}</div>
+              <div class="card-season">${p.season}</div>
+            </div>
+            <span class="card-icon">${p.icon}</span>
+          </div>
+          <div class="card-nodata">Keine Daten verfügbar</div>`;
+      } else {
+        card.className = `pollen-card l-${entry.level}`;
+        card.innerHTML = `
+          <div class="card-top">
+            <div>
+              <div class="card-name">${p.name}</div>
+              <div class="card-en">${p.en}</div>
+              <div class="card-season">${p.season}</div>
+            </div>
+            <span class="card-icon">${p.icon}</span>
+          </div>
+          <div class="card-value-row">
+            <span class="card-value">${entry.display}</span>
+            <span class="card-unit">${entry.unit}</span>
+            ${entry.omDisplay && entry.omDisplay !== '0' ? `<span class="card-conc">~${entry.omDisplay}\u202fK/m³</span>` : ''}
+          </div>
+          <div class="level-row">
+            <span class="level-label">${LEVEL_DE[entry.level]}</span>
+            <div class="level-track"><div class="level-fill" style="width:${entry.pct ?? 0}%"></div></div>
+          </div>`;
+      }
+
+      grid.appendChild(card);
+    }
+
+    document.getElementById('content').replaceChildren(grid);
+  }
+
+  // ─── Date tab labels (initial, provisional) ───────────────────────────────────
+  function setupDateLabels() {
+    const today = new Date();
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      const el = document.getElementById(`tabDate${i}`);
+      if (el) el.textContent = d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+    }
+  }
+
+  function syncTabs() {
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', parseInt(t.dataset.day) === state.selectedDay);
+    });
+  }
+
+  // ─── Events ──────────────────────────────────────────────────────────────────
+  document.getElementById('locationSelect').addEventListener('change', e => {
+    state.locationKey  = e.target.value;
+    state.customCoords = null;
+    state.selectedDay  = 0;
+    syncTabs();
+    loadData();
+  });
+
+  document.getElementById('dayTabs').addEventListener('click', e => {
+    const tab = e.target.closest('.tab');
+    if (!tab) return;
+    state.selectedDay = parseInt(tab.dataset.day, 10);
+    syncTabs();
+    render();
+  });
+
+  document.getElementById('geoBtn').addEventListener('click', () => {
+    if (!navigator.geolocation) return;
+    const btn = document.getElementById('geoBtn');
+    btn.classList.add('loading');
+
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        btn.classList.remove('loading');
+        // Find nearest listed city to snap dropdown
+        let nearest = 'pfarrkirchen', nearestDist = Infinity;
+        for (const [key, loc] of Object.entries(LOCATIONS)) {
+          const d = Math.hypot(loc.lat - coords.latitude, loc.lon - coords.longitude);
+          if (d < nearestDist) { nearestDist = d; nearest = key; }
+        }
+        state.locationKey  = nearest;
+        state.customCoords = {
+          lat: coords.latitude,
+          lon: coords.longitude,
+          country: LOCATIONS[nearest].country,
+          lgl: LOCATIONS[nearest].lgl ?? null,
+          dwd: LOCATIONS[nearest].dwd,
+        };
+        document.getElementById('locationSelect').value = nearest;
+        loadData();
+      },
+      () => { btn.classList.remove('loading'); }
+    );
+  });
+
+  // ─── Init ────────────────────────────────────────────────────────────────────
+  document.getElementById('locationSelect').value = state.locationKey;
+  setupDateLabels();
+  loadData();
+  </script>
+</body>
+</html>

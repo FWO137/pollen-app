@@ -1,0 +1,5 @@
+# Proxy the DWD pollen API to avoid CORS issues.
+# opendata.dwd.de doesn't send Access-Control-Allow-Origin headers,
+# so this Netlify rule fetches it server-side instead.
+/dwd-api  https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json  200
+/lgl-api  https://epin.lgl.bayern.de/api/measurements                           200
