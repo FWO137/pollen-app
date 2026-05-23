@@ -1,0 +1,10 @@
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Explicitly allow geolocation from this origin.
+    # Without this, Netlify's CDN may inject Permissions-Policy: geolocation=()
+    # which blocks the browser Geolocation API regardless of iOS system settings.
+    Permissions-Policy = "geolocation=(self)"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

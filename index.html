@@ -848,8 +848,8 @@
       </button>`;
 
     const hint = permissionDenied
-      ? '<strong>Standortzugriff nicht erlaubt</strong>Erlaube den Zugriff unter Einstellungen → Safari → Ortungsdienste, oder wähle einen Ort:'
-      : '<strong>Standort nicht ermittelbar</strong>Bitte wähle einen Ort:';
+      ? '<strong>Standortzugriff nicht erlaubt</strong>In Safari: Adressleiste → <b>AA</b> → Website-Einstellungen → Standort → <b>Erlauben</b>. Danach diese Seite neu laden.'
+      : '<strong>Standort nicht ermittelbar</strong>Bitte wähle einen Ort oder versuche es erneut:';
 
     document.getElementById('content').innerHTML = `
       <div class="location-picker">
