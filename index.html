@@ -381,7 +381,6 @@
     @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
     .retry-btn {
-      margin-top: 4px;
       background: var(--accent);
       color: #fff;
       border: none;
@@ -393,6 +392,72 @@
       cursor: pointer;
       touch-action: manipulation;
       min-height: 44px;
+    }
+
+    /* ── Location Picker ── */
+    .location-picker { padding: 4px 0 8px; }
+
+    .picker-hint {
+      font-size: 15px;
+      color: var(--text-2);
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+
+    .picker-hint strong { color: var(--text-1); display: block; font-size: 17px; margin-bottom: 4px; }
+
+    .picker-section { margin-bottom: 20px; }
+
+    .picker-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-3);
+      margin-bottom: 10px;
+      padding-left: 2px;
+    }
+
+    .picker-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .picker-pill {
+      background: var(--surface);
+      border: none;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-1);
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 36px;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.07), 0 2px 8px rgba(0,0,0,0.04);
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .picker-pill { box-shadow: none; background: var(--surface2); }
+    }
+
+    .picker-pill:active { opacity: 0.6; }
+
+    .picker-retry {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: none;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--accent);
+      cursor: pointer;
+      touch-action: manipulation;
+      padding: 0;
+      min-height: 44px;
+      margin-bottom: 20px;
     }
 
     /* ── Footer ── */
@@ -759,14 +824,65 @@
     }
   }
 
+  // ─── Location picker (fallback when GPS unavailable) ─────────────────────────
+  function showLocationPicker(permissionDenied) {
+    const nameEl = document.getElementById('locationName');
+    nameEl.textContent = 'Standort wählen';
+    document.getElementById('summary').style.display = 'none';
+
+    const DE_KEYS = ['pfarrkirchen','munich','nuremberg','augsburg','ingolstadt','regensburg','stuttgart','freiburg','ulm','constance'];
+    const AT_KEYS = ['vienna','salzburg','innsbruck','graz','linz','klagenfurt','bregenz'];
+
+    const pills = keys => keys.map(k =>
+      `<button class="picker-pill" data-key="${k}">${LOCATIONS[k].name}</button>`
+    ).join('');
+
+    const retryRow = permissionDenied ? '' : `
+      <button class="picker-retry" id="retryGeoBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
+        Standort erneut ermitteln
+      </button>`;
+
+    const hint = permissionDenied
+      ? '<strong>Standortzugriff nicht erlaubt</strong>Erlaube den Zugriff unter Einstellungen → Safari → Ortungsdienste, oder wähle einen Ort:'
+      : '<strong>Standort nicht ermittelbar</strong>Bitte wähle einen Ort:';
+
+    document.getElementById('content').innerHTML = `
+      <div class="location-picker">
+        <p class="picker-hint">${hint}</p>
+        ${retryRow}
+        <div class="picker-section">
+          <div class="picker-section-label">Bayern &amp; Baden-Württemberg</div>
+          <div class="picker-pills">${pills(DE_KEYS)}</div>
+        </div>
+        <div class="picker-section">
+          <div class="picker-section-label">Österreich</div>
+          <div class="picker-pills">${pills(AT_KEYS)}</div>
+        </div>
+      </div>`;
+
+    document.getElementById('content').addEventListener('click', e => {
+      if (e.target.closest('#retryGeoBtn')) { requestGeo(); return; }
+      const pill = e.target.closest('.picker-pill');
+      if (!pill) return;
+      state.locationKey  = pill.dataset.key;
+      state.customCoords = null;
+      document.getElementById('locationName').textContent = LOCATIONS[pill.dataset.key].name;
+      loadData();
+    });
+  }
+
   // ─── Geolocation ─────────────────────────────────────────────────────────────
   function requestGeo() {
     const btn    = document.getElementById('geoBtn');
     const nameEl = document.getElementById('locationName');
 
     if (!navigator.geolocation) {
-      nameEl.textContent = LOCATIONS[state.locationKey].name;
-      loadData();
+      showLocationPicker(false);
       return;
     }
 
@@ -789,17 +905,7 @@
       },
       (err) => {
         btn.classList.remove('loading');
-        const msg = err.code === 1
-          ? 'Standortzugriff verweigert.\nBitte in den Einstellungen erlauben.'
-          : 'Standort konnte nicht ermittelt werden.';
-        nameEl.textContent = 'Standort nicht verfügbar';
-        document.getElementById('summary').style.display = 'none';
-        document.getElementById('content').innerHTML = `
-          <div class="state-view">
-            <p style="font-size:24px;">📍</p>
-            <p style="white-space:pre-line;text-align:center;">${msg}</p>
-            <button class="retry-btn" onclick="requestGeo()">Erneut versuchen</button>
-          </div>`;
+        showLocationPicker(err.code === 1);
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
     );
