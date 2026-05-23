@@ -380,6 +380,21 @@
     @keyframes spin   { to { transform: rotate(360deg); } }
     @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
+    .retry-btn {
+      margin-top: 4px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 11px 24px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 44px;
+    }
+
     /* ── Footer ── */
     .footer {
       margin-top: 40px;
@@ -772,13 +787,21 @@
         nameEl.textContent = LOCATIONS[nearest].name;
         loadData();
       },
-      () => {
+      (err) => {
         btn.classList.remove('loading');
-        nameEl.textContent = LOCATIONS[state.locationKey].name;
-        state.customCoords = null;
-        loadData();
+        const msg = err.code === 1
+          ? 'Standortzugriff verweigert.\nBitte in den Einstellungen erlauben.'
+          : 'Standort konnte nicht ermittelt werden.';
+        nameEl.textContent = 'Standort nicht verfügbar';
+        document.getElementById('summary').style.display = 'none';
+        document.getElementById('content').innerHTML = `
+          <div class="state-view">
+            <p style="font-size:24px;">📍</p>
+            <p style="white-space:pre-line;text-align:center;">${msg}</p>
+            <button class="retry-btn" onclick="requestGeo()">Erneut versuchen</button>
+          </div>`;
       },
-      { timeout: 8000, maximumAge: 300000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
     );
   }
 
