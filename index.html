@@ -188,9 +188,20 @@
       padding: 16px 20px;
       margin-bottom: 16px;
       display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .summary-row {
+      display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+    }
+
+    .summary-meta {
+      font-size: 11px;
+      color: var(--text-3);
     }
 
     .summary-left {
@@ -584,6 +595,7 @@
     selectedDay: 0,
     data: null,
     customCoords: null,
+    fetchedAt: null,
   };
 
   let dwdCache = null; // DWD JSON is fetched once per session
@@ -806,6 +818,7 @@
       }
 
       state.data = buildDays(dwdDays, omDays, lglToday);
+      state.fetchedAt = new Date();
       render();
     } catch (err) {
       showError(err.message);
@@ -858,28 +871,54 @@
       if (idx > domIdx) { domIdx = idx; dominant = p; }
     }
 
+    // Determine which sources contributed to this day's data
+    const SOURCE_LABELS = { lgl: 'LGL Bayern ePIN', dwd: 'DWD', om: 'Open-Meteo' };
+    const usedSources = new Set();
+    for (const p of POLLEN) {
+      const src = dayData.pollens[p.key]?.source;
+      if (src) usedSources.add(src);
+    }
+    const sourceText = [...usedSources].map(s => SOURCE_LABELS[s] || s).join(' · ');
+    const fetchedText = state.fetchedAt
+      ? state.fetchedAt.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr'
+      : '';
+
     // Summary banner
     const summaryEl = document.getElementById('summary');
     summaryEl.style.display = 'flex';
     summaryEl.innerHTML = `
-      <div class="summary-left">
-        <div class="summary-dot dot-${overall}"></div>
-        <div class="summary-text">
-          <strong>${SUMMARY_DE[overall]}</strong>
-          <span>${fmtDate(dayData.date)}</span>
+      <div class="summary-row">
+        <div class="summary-left">
+          <div class="summary-dot dot-${overall}"></div>
+          <div class="summary-text">
+            <strong>${SUMMARY_DE[overall]}</strong>
+            <span>${fmtDate(dayData.date)}</span>
+          </div>
+        </div>
+        <div class="summary-right">
+          ${dominant && domIdx > 0
+            ? `Hauptbelastung<br><strong>${dominant.name}</strong>`
+            : 'Keine aktiven Pollen'}
         </div>
       </div>
-      <div class="summary-right">
-        ${dominant && domIdx > 0
-          ? `Hauptbelastung<br><strong>${dominant.name}</strong>`
-          : 'Keine aktiven Pollen'}
+      <div class="summary-meta">
+        Quelle: ${sourceText}${fetchedText ? ` &middot; Abgerufen: ${fetchedText}` : ''}
       </div>`;
 
-    // Pollen grid
+    // Pollen grid — sorted by current load level (highest first, no-data last)
     const grid = document.createElement('div');
     grid.className = 'pollen-grid';
 
-    for (const p of POLLEN) {
+    const sortedPollen = [...POLLEN].sort((a, b) => {
+      const aEntry = dayData.pollens[a.key];
+      const bEntry = dayData.pollens[b.key];
+      if (!aEntry && !bEntry) return 0;
+      if (!aEntry) return 1;
+      if (!bEntry) return -1;
+      return LEVELS.indexOf(bEntry.level) - LEVELS.indexOf(aEntry.level);
+    });
+
+    for (const p of sortedPollen) {
       const entry = dayData.pollens[p.key];
       const card  = document.createElement('div');
 
