@@ -606,7 +606,7 @@
     selectedDay: 0,
     data: null,
     customCoords: null,
-    fetchedAt: null,
+    dataTimestamp: null,
   };
 
   let dwdCache = null;
@@ -621,6 +621,15 @@
   function fmtDate(dateStr) {
     if (!dateStr) return '';
     return new Date(dateStr + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  }
+
+  function fmtDataTimestamp(ts) {
+    if (!ts) return '';
+    const [datePart, ...rest] = ts.split(' ');
+    const date = new Date(datePart + 'T12:00:00');
+    const dateStr = date.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
+    const timeMatch = rest.join(' ').match(/\d{2}:\d{2}/);
+    return timeMatch ? `${dateStr}, ${timeMatch[0]} Uhr` : dateStr;
   }
 
   // ─── DWD API ─────────────────────────────────────────────────────────────────
@@ -652,7 +661,7 @@
     if (!region) return null;
     const base = new Date(raw.last_update.split(' ')[0] + 'T12:00:00');
     const p = region.Pollen;
-    return ['today', 'tomorrow', 'dayafter_to'].map((field, i) => {
+    const days = ['today', 'tomorrow', 'dayafter_to'].map((field, i) => {
       const d = new Date(base);
       d.setDate(d.getDate() + i);
       return {
@@ -669,6 +678,7 @@
         },
       };
     });
+    return { days, lastUpdate: raw.last_update };
   }
 
   // ─── Open-Meteo API ───────────────────────────────────────────────────────────
@@ -735,11 +745,19 @@
 
   function processLGL(raw, stationId) {
     const result = {};
+    let dataDate = null;
     for (const m of raw.measurements) {
       if (m.location !== stationId) continue;
       const appKey = LGL_MAP[m.polle];
       if (!appKey) continue;
       const maxVal = Math.max(...m.data.map(d => d.value || 0));
+      for (const d of m.data) {
+        const dateRaw = d.date ?? d.datum ?? d.datetime ?? d.day ?? d.timestamp ?? null;
+        if (dateRaw) {
+          const ds = String(dateRaw).split('T')[0];
+          if (!dataDate || ds > dataDate) dataDate = ds;
+        }
+      }
       const thr = LGL_THR[m.polle] || [1, 20, 200, 1000];
       const level = maxVal < thr[0] ? 'none'
         : maxVal < thr[1] ? 'low'
@@ -753,7 +771,7 @@
       else                      pct = Math.min(Math.round(83 + (maxVal - thr[2]) / (thr[3] - thr[2]) * 17), 100);
       result[appKey] = { level, display, unit: 'K/m³', source: 'lgl', pct };
     }
-    return Object.keys(result).length > 0 ? result : null;
+    return Object.keys(result).length > 0 ? { data: result, dataDate } : null;
   }
 
   // ─── Merge ───────────────────────────────────────────────────────────────────
@@ -806,18 +824,23 @@
           fetchOM(loc.lat, loc.lon).then(processOM),
           lglStation ? fetchLGL().then(raw => processLGL(raw, lglStation)) : Promise.resolve(null),
         ]);
-        dwdDays  = dwdResult.status  === 'fulfilled' ? dwdResult.value  : null;
+        const dwdVal = dwdResult.status  === 'fulfilled' ? dwdResult.value  : null;
+        dwdDays  = dwdVal?.days ?? null;
+        const dwdLastUpdate = dwdVal?.lastUpdate ?? null;
         omDays   = omResult.status   === 'fulfilled' ? omResult.value   : null;
-        lglToday = lglResult.status  === 'fulfilled' ? lglResult.value  : null;
+        const lglVal = lglResult.status === 'fulfilled' ? lglResult.value : null;
+        lglToday = lglVal?.data ?? null;
+        const lglDataDate = lglVal?.dataDate ?? null;
         if (dwdDays === null && omDays === null && lglToday === null)
           throw new Error('Alle Datenquellen nicht verfügbar');
+        state.dataTimestamp = lglDataDate ?? dwdLastUpdate ?? null;
       } else {
         const omRaw = await fetchOM(loc.lat, loc.lon);
         omDays = processOM(omRaw);
+        state.dataTimestamp = null;
       }
 
       state.data = buildDays(dwdDays, omDays, lglToday);
-      state.fetchedAt = new Date();
       render();
     } catch (err) {
       showError(err.message);
@@ -961,9 +984,7 @@
       if (src) usedSources.add(src);
     }
     const sourceText  = [...usedSources].map(s => SOURCE_LABELS[s] || s).join(' · ');
-    const fetchedText = state.fetchedAt
-      ? state.fetchedAt.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr'
-      : '';
+    const standText = fmtDataTimestamp(state.dataTimestamp);
 
     const summaryEl = document.getElementById('summary');
     summaryEl.style.display = 'block';
@@ -984,7 +1005,7 @@
       </div>
       <div class="summary-div"></div>
       <div class="summary-meta">
-        Quelle: ${sourceText}${fetchedText ? ` &middot; Abgerufen: ${fetchedText}` : ''}
+        Quelle: ${sourceText}${standText ? ` &middot; Stand: ${standText}` : ''}
       </div>`;
 
     const grid = document.createElement('div');
@@ -1071,7 +1092,7 @@
     dwdCache = null;
     lglCache = null;
     state.data = null;
-    state.fetchedAt = null;
+    state.dataTimestamp = null;
     requestGeo();
   });
 
