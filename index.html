@@ -29,7 +29,7 @@
       --c-vhi:  #B91C1C;
 
       --accent: #9A6F00;
-      --glow-a: 0.065;
+      --glow-a: 0.22;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -47,7 +47,7 @@
         --c-vhi:  #F87171;
 
         --accent: #CCA020;
-        --glow-a: 0.14;
+        --glow-a: 0.36;
       }
     }
     :root[data-theme="dark"] {
@@ -55,10 +55,15 @@
       --t1:   #E6E8E3; --t2: rgba(230,232,227,0.46); --t3: rgba(230,232,227,0.24);
       --c-none: #6B7280; --c-low: #4ADE80; --c-med: #FBBF24;
       --c-high: #FB923C; --c-vhi: #F87171;
-      --accent: #CCA020; --glow-a: 0.14;
+      --accent: #CCA020; --glow-a: 0.36;
     }
 
     html { background: var(--bg); }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
 
     body {
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -150,6 +155,7 @@
     }
 
     .day-tab {
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: flex-end;
@@ -170,6 +176,19 @@
       transition: color 0.15s;
     }
     .day-tab.active { color: var(--t1); font-weight: 700; }
+
+    .day-tab::after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0; bottom: -4px;
+      height: 2px;
+      border-radius: 1px;
+      background: var(--accent);
+      opacity: 0;
+      transform: scaleX(0.5);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+    .day-tab.active::after { opacity: 1; transform: scaleX(1); }
 
     .tab-date {
       font-size: 10px;
@@ -228,9 +247,9 @@
 
     .p-row {
       display: grid;
-      grid-template-columns: 80px 1fr 76px;
+      grid-template-columns: 98px 1fr 76px;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
       padding: 11px 0;
       border-bottom: 1px solid var(--bdr);
       animation: fadeIn 0.3s ease both;
@@ -250,10 +269,16 @@
       color: var(--t1);
       white-space: nowrap;
     }
+    .p-icon {
+      display: inline-block;
+      font-size: 13px;
+      margin-right: 5px;
+      filter: saturate(0.85);
+    }
 
     .p-track {
-      height: 2px;
-      border-radius: 1px;
+      height: 3px;
+      border-radius: 1.5px;
       background: var(--bdr);
       position: relative;
       overflow: hidden;
@@ -262,7 +287,7 @@
       position: absolute;
       inset: 0 auto 0 0;
       width: var(--pct, 0%);
-      border-radius: 1px;
+      border-radius: 1.5px;
       transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
@@ -302,7 +327,7 @@
       text-transform: uppercase; letter-spacing: 0.09em;
       color: var(--t3); white-space: nowrap;
     }
-    .np-list { font-size: 12px; color: var(--t3); line-height: 1.7; }
+    .np-list { font-size: 12px; color: var(--t2); line-height: 1.7; }
 
     /* ── Stand / source line ── */
     .stand-line {
@@ -389,16 +414,18 @@
     }
 
     /* ── Footer ── */
+    /* Informational text (not purely decorative), so it uses --t2 rather
+       than the very low-contrast --t3 used for hairline/label accents. */
     .footer {
       margin-top: 48px;
       font-size: 11px;
-      color: var(--t3);
+      color: var(--t2);
       line-height: 2.0;
     }
-    .footer a { color: var(--t3); text-decoration: underline; text-decoration-color: var(--bdr); }
+    .footer a { color: var(--t2); text-decoration: underline; text-decoration-color: var(--bdr); }
 
     .theme-toggle {
-      font-family: inherit; font-size: 11px; color: var(--t3);
+      font-family: inherit; font-size: 11px; color: var(--t2);
       background: none; border: none; padding: 0; cursor: pointer;
       text-decoration: underline; text-decoration-color: var(--bdr);
       touch-action: manipulation;
@@ -406,6 +433,10 @@
   </style>
 </head>
 <body>
+
+  <!-- Announces loading/error/data-loaded state changes to screen readers,
+       independent of the (visually) rich content that #content re-renders. -->
+  <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
 
   <!-- Atmospheric level glow -->
   <div class="glow-ring" id="glowRing"></div>
@@ -662,6 +693,10 @@
         </div>
       </div>`;
 
+    announce(permissionDenied
+      ? 'Standortzugriff nicht erlaubt. Bitte wähle einen Ort aus der Liste.'
+      : 'Standort nicht ermittelbar. Bitte wähle einen Ort aus der Liste.');
+
     document.getElementById('content').addEventListener('click', e => {
       if (e.target.closest('#retryGeoBtn')) { requestGeo(); return; }
       const pill = e.target.closest('.picker-pill');
@@ -741,6 +776,13 @@
     document.getElementById('glowRing').className = `glow-ring l-${level}`;
   }
 
+  // Concise status text for screen readers, decoupled from the (visually)
+  // rich markup #content re-renders on every state change.
+  function announce(text) {
+    const el = document.getElementById('srStatus');
+    if (el) el.textContent = text;
+  }
+
   function showLoading() {
     setGlow('');
     document.getElementById('summary').style.display = 'none';
@@ -749,6 +791,7 @@
         <div class="spinner"></div>
         <p>Pollendaten werden geladen …</p>
       </div>`;
+    announce('Pollendaten werden geladen');
   }
 
   function showError(msg) {
@@ -761,6 +804,7 @@
         <p class="err-detail">${msg}</p>
         <button class="retry-btn" onclick="location.reload()">Neu laden</button>
       </div>`;
+    announce('Fehler beim Laden der Pollendaten: ' + msg);
   }
 
   function render() {
@@ -848,7 +892,7 @@
       row.className = `p-row l-${entry.level}`;
       row.style.setProperty('--pct', `${entry.pct ?? 0}%`);
       row.innerHTML = `
-        <div class="p-name">${p.name}</div>
+        <div class="p-name"><span class="p-icon" aria-hidden="true">${p.icon}</span>${p.name}</div>
         <div class="p-track"><div class="p-fill"></div></div>
         <div class="p-val">${entry.display}<span class="u">${entry.unit}</span></div>`;
       list.appendChild(row);
@@ -871,6 +915,9 @@
     wrap.appendChild(sl);
 
     document.getElementById('content').replaceChildren(wrap);
+
+    const dominantText = dominant && domIdx > 0 ? `, Hauptbelastung ${dominant.name}` : '';
+    announce(`${SUMMARY_DE[overall]} für ${LOCATIONS[state.locationKey]?.name ?? 'deinen Standort'}${dominantText}`);
   }
 
   // ─── Tabs & date labels ───────────────────────────────────────────────────────
