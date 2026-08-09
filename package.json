@@ -1,0 +1,8 @@
+{
+  "name": "pollen-app",
+  "private": true,
+  "description": "Pollenflug-Vorhersage für Süddeutschland & Österreich — static site, no build step.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

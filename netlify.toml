@@ -1,3 +1,9 @@
+# Static site, no bundler. package.json exists only for the Node test
+# suite (`npm test`) — explicitly skip the build step so its presence
+# doesn't make Netlify try to run `npm install`/`npm run build`.
+[build]
+  publish = "."
+
 [[headers]]
   for = "/*"
   [headers.values]
@@ -8,3 +14,8 @@
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    # Single-file inline app: script/style must stay 'unsafe-inline' (no
+    # external bundle to hash/nonce). connect-src is scoped to the actual
+    # APIs the app talks to (DWD/LGL via same-origin redirects, Open-Meteo
+    # directly) instead of allowing arbitrary hosts.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://air-quality-api.open-meteo.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
