@@ -625,11 +625,20 @@
 
   function fmtDataTimestamp(ts) {
     if (!ts) return '';
-    const [datePart, ...rest] = ts.split(' ');
-    const date = new Date(datePart + 'T12:00:00');
-    const dateStr = date.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
-    const timeMatch = rest.join(' ').match(/\d{2}:\d{2}/);
-    return timeMatch ? `${dateStr}, ${timeMatch[0]} Uhr` : dateStr;
+    let date, timeStr;
+    if (/^\d{4}-\d{2}-\d{2}T/.test(ts)) {
+      // ISO string from LGL Unix timestamps → show in local (Berlin) time
+      date = new Date(ts);
+      timeStr = date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+    } else {
+      // DWD format: "YYYY-MM-DD HH:MM Uhr"
+      const [datePart, ...rest] = ts.split(' ');
+      date = new Date(datePart + 'T12:00:00');
+      const m = ts.match(/\d{2}:\d{2}/);
+      timeStr = m ? m[0] : null;
+    }
+    const dateStr = date.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', timeZone: 'Europe/Berlin' });
+    return timeStr ? `${dateStr}, ${timeStr} Uhr` : dateStr;
   }
 
   // ─── DWD API ─────────────────────────────────────────────────────────────────
@@ -745,18 +754,14 @@
 
   function processLGL(raw, stationId) {
     const result = {};
-    let dataDate = null;
+    let maxToTs = null;
     for (const m of raw.measurements) {
       if (m.location !== stationId) continue;
       const appKey = LGL_MAP[m.polle];
       if (!appKey) continue;
       const maxVal = Math.max(...m.data.map(d => d.value || 0));
       for (const d of m.data) {
-        const dateRaw = d.date ?? d.datum ?? d.datetime ?? d.day ?? d.timestamp ?? null;
-        if (dateRaw) {
-          const ds = String(dateRaw).split('T')[0];
-          if (!dataDate || ds > dataDate) dataDate = ds;
-        }
+        if (d.to != null && (maxToTs == null || d.to > maxToTs)) maxToTs = d.to;
       }
       const thr = LGL_THR[m.polle] || [1, 20, 200, 1000];
       const level = maxVal < thr[0] ? 'none'
@@ -771,6 +776,7 @@
       else                      pct = Math.min(Math.round(83 + (maxVal - thr[2]) / (thr[3] - thr[2]) * 17), 100);
       result[appKey] = { level, display, unit: 'K/m³', source: 'lgl', pct };
     }
+    const dataDate = maxToTs != null ? new Date(maxToTs * 1000).toISOString() : null;
     return Object.keys(result).length > 0 ? { data: result, dataDate } : null;
   }
 
