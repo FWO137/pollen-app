@@ -872,7 +872,7 @@
 
     const hint = permissionDenied
       ? '<strong>Standortzugriff nicht erlaubt</strong>In Safari: Adressleiste → <b>AA</b> → Website-Einstellungen → Standort → <b>Erlauben</b>. Danach diese Seite neu laden.'
-      : '<strong>Standort nicht ermittelbar</strong>Bitte wähle einen Ort oder versuche es erneut:';
+      : '<strong>Standort nicht ermittelbar</strong>Prüfe unter Einstellungen → Datenschutz &amp; Sicherheit → Ortungsdienste, dass die Ortungsdienste sowie der Zugriff für Safari aktiviert sind. Oder wähle einen Ort:';
 
     document.getElementById('content').innerHTML = `
       <div class="location-picker">
@@ -913,24 +913,40 @@
     nameEl.textContent = 'Standort wird ermittelt …';
     showLoading();
 
+    const onSuccess = ({ coords }) => {
+      btn.classList.remove('loading');
+      let nearest = 'munich', nearestDist = Infinity;
+      for (const [key, loc] of Object.entries(LOCATIONS)) {
+        const d = Math.hypot(loc.lat - coords.latitude, loc.lon - coords.longitude);
+        if (d < nearestDist) { nearestDist = d; nearest = key; }
+      }
+      state.locationKey  = nearest;
+      state.customCoords = { lat: coords.latitude, lon: coords.longitude };
+      nameEl.textContent = LOCATIONS[nearest].name;
+      loadData();
+    };
+
+    const onFinalError = (err) => {
+      btn.classList.remove('loading');
+      showLocationPicker(err.code === 1);
+    };
+
     navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        btn.classList.remove('loading');
-        let nearest = 'munich', nearestDist = Infinity;
-        for (const [key, loc] of Object.entries(LOCATIONS)) {
-          const d = Math.hypot(loc.lat - coords.latitude, loc.lon - coords.longitude);
-          if (d < nearestDist) { nearestDist = d; nearest = key; }
-        }
-        state.locationKey  = nearest;
-        state.customCoords = { lat: coords.latitude, lon: coords.longitude };
-        nameEl.textContent = LOCATIONS[nearest].name;
-        loadData();
-      },
+      onSuccess,
       (err) => {
-        btn.classList.remove('loading');
-        showLocationPicker(err.code === 1);
+        // iOS frequently times out or reports POSITION_UNAVAILABLE on the
+        // first high-accuracy fix (cold GPS start, indoors, weak signal).
+        // Retry once with relaxed accuracy and a longer timeout before
+        // giving up. A permission denial won't change on retry, so skip
+        // straight to the picker in that case.
+        if (err.code === 1) { onFinalError(err); return; }
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          onFinalError,
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 300000 }
     );
   }
 
