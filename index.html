@@ -4,514 +4,423 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#F3F4F1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#090B09" media="(prefers-color-scheme: dark)">
   <title>Pollenflug</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      color-scheme: light dark;
-      --bg:        #F2F2F7;
-      --surface:   #FFFFFF;
-      --surface2:  #E5E5EA;
-      --sep:       rgba(60,60,67,0.13);
-      --text-1:    #000000;
-      --text-2:    rgba(60,60,67,0.60);
-      --text-3:    rgba(60,60,67,0.36);
-      --accent:    #007AFF;
+      --bg:   #F3F4F1;
+      --bdr:  rgba(0,0,0,0.08);
+      --t1:   #111410;
+      --t2:   rgba(17,20,16,0.50);
+      --t3:   rgba(17,20,16,0.26);
 
-      --c-none:     rgba(120,120,128,0.28);
-      --c-low:      #34C759;
-      --c-low-t:    #1A7A35;
-      --c-med:      #FF9F0A;
-      --c-med-t:    #A85900;
-      --c-high:     #FF6B00;
-      --c-high-t:   #C03500;
-      --c-vhi:      #FF3B30;
-      --c-vhi-t:    #B5281F;
+      --c-none: #9CA3AF;
+      --c-low:  #15803D;
+      --c-med:  #B45309;
+      --c-high: #C2410C;
+      --c-vhi:  #B91C1C;
+
+      --accent: #9A6F00;
+      --glow-a: 0.065;
     }
 
     @media (prefers-color-scheme: dark) {
-      :root {
-        --bg:       #000000;
-        --surface:  #1C1C1E;
-        --surface2: #2C2C2E;
-        --sep:      rgba(84,84,88,0.65);
-        --text-1:   #FFFFFF;
-        --text-2:   rgba(235,235,245,0.60);
-        --text-3:   rgba(235,235,245,0.36);
-        --accent:   #0A84FF;
+      :root:not([data-theme="light"]) {
+        --bg:   #090B09;
+        --bdr:  rgba(255,255,255,0.08);
+        --t1:   #E6E8E3;
+        --t2:   rgba(230,232,227,0.46);
+        --t3:   rgba(230,232,227,0.24);
 
-        --c-low-t:  #34C759;
-        --c-med-t:  #FF9F0A;
-        --c-high-t: #FF6B00;
-        --c-vhi-t:  #FF3B30;
+        --c-none: #6B7280;
+        --c-low:  #4ADE80;
+        --c-med:  #FBBF24;
+        --c-high: #FB923C;
+        --c-vhi:  #F87171;
+
+        --accent: #CCA020;
+        --glow-a: 0.14;
       }
+    }
+    :root[data-theme="dark"] {
+      --bg:   #090B09; --bdr: rgba(255,255,255,0.08);
+      --t1:   #E6E8E3; --t2: rgba(230,232,227,0.46); --t3: rgba(230,232,227,0.24);
+      --c-none: #6B7280; --c-low: #4ADE80; --c-med: #FBBF24;
+      --c-high: #FB923C; --c-vhi: #F87171;
+      --accent: #CCA020; --glow-a: 0.14;
     }
 
     html { background: var(--bg); }
 
     body {
-      font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+                   'Segoe UI', sans-serif;
       background: var(--bg);
-      color: var(--text-1);
+      color: var(--t1);
       min-height: 100dvh;
       -webkit-font-smoothing: antialiased;
       -webkit-tap-highlight-color: transparent;
       overscroll-behavior-y: none;
+      overflow-x: hidden;
     }
 
+    /* ── Atmospheric glow ── */
+    .glow-ring {
+      position: fixed;
+      top: -80px; left: 50%;
+      transform: translateX(-50%);
+      width: 800px; height: 440px;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+      transition: background 1s ease;
+    }
+    .glow-ring.l-none     { background: radial-gradient(ellipse at 50% 30%, rgba(156,163,175,var(--glow-a)) 0%, transparent 65%); }
+    .glow-ring.l-low      { background: radial-gradient(ellipse at 50% 30%, rgba(74,222,128,var(--glow-a))  0%, transparent 65%); }
+    .glow-ring.l-medium   { background: radial-gradient(ellipse at 50% 30%, rgba(251,191,36,var(--glow-a))  0%, transparent 65%); }
+    .glow-ring.l-high     { background: radial-gradient(ellipse at 50% 30%, rgba(251,146,60,var(--glow-a))  0%, transparent 65%); }
+    .glow-ring.l-very-high{ background: radial-gradient(ellipse at 50% 30%, rgba(248,113,113,var(--glow-a)) 0%, transparent 65%); }
+
+    /* ── App shell ── */
     .app {
-      max-width: 600px;
+      position: relative;
+      z-index: 1;
+      max-width: 480px;
       margin: 0 auto;
       padding:
-        calc(env(safe-area-inset-top, 0px) + 24px)
-        calc(env(safe-area-inset-right, 0px) + 16px)
-        calc(env(safe-area-inset-bottom, 0px) + 48px)
-        calc(env(safe-area-inset-left, 0px) + 16px);
+        calc(env(safe-area-inset-top, 0px) + 28px)
+        calc(env(safe-area-inset-right, 0px) + 22px)
+        calc(env(safe-area-inset-bottom, 0px) + 64px)
+        calc(env(safe-area-inset-left, 0px) + 22px);
     }
 
     /* ── Header ── */
     .header {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      margin-bottom: 24px;
-    }
-
-    .app-title {
-      font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif;
-      font-size: 34px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      line-height: 1.1;
+      margin-bottom: 52px;
     }
 
     .location-btn {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      background: none;
-      border: none;
-      padding: 4px 0;
-      margin-top: 4px;
-      font-family: inherit;
-      font-size: 15px;
-      font-weight: 500;
-      color: var(--accent);
-      cursor: pointer;
-      touch-action: manipulation;
-      min-height: 44px;
-      -webkit-user-select: none;
-      user-select: none;
-    }
-
-    .location-btn.loading { opacity: 0.45; pointer-events: none; }
-
-    .app-icon {
-      width: 46px;
-      height: 46px;
-      background: linear-gradient(150deg, #5AC85A 0%, #34C759 100%);
-      border-radius: 13px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      flex-shrink: 0;
-      box-shadow: 0 2px 10px rgba(52,199,89,0.35);
-    }
-
-    /* ── Segmented Control ── */
-    .segmented {
-      display: flex;
-      background: var(--surface2);
-      border-radius: 10px;
-      padding: 2px;
-      margin-bottom: 20px;
-      gap: 2px;
-    }
-
-    .seg {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 1px;
-      padding: 6px 4px 7px;
-      min-height: 44px;
-      border: none;
-      background: transparent;
-      border-radius: 8px;
+      gap: 7px;
       font-family: inherit;
       font-size: 13px;
       font-weight: 500;
-      color: var(--text-1);
+      color: var(--t2);
+      background: none;
+      border: none;
+      padding: 0;
       cursor: pointer;
       touch-action: manipulation;
+      min-height: 44px;
       -webkit-user-select: none;
       user-select: none;
     }
+    .location-btn.loading { opacity: 0.4; pointer-events: none; }
 
-    .seg.active {
-      background: var(--surface);
-      font-weight: 600;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.14);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .seg.active { box-shadow: 0 1px 4px rgba(0,0,0,0.55); }
-    }
-
-    .seg-sub {
-      font-size: 11px;
-      font-weight: 400;
-      color: var(--text-3);
-    }
-    .seg.active .seg-sub { color: var(--text-2); }
-
-    /* ── Summary ── */
-    .summary {
-      background: var(--surface);
-      border-radius: 16px;
-      padding: 16px 18px;
-      margin-bottom: 12px;
-      box-shadow: 0 1px 0 rgba(0,0,0,0.06), 0 2px 14px rgba(0,0,0,0.05);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .summary { box-shadow: none; }
-    }
-
-    .summary-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .summary-left { display: flex; align-items: center; gap: 11px; }
-
-    .summary-dot {
-      width: 13px;
-      height: 13px;
+    .loc-pulse {
+      width: 7px; height: 7px;
       border-radius: 50%;
+      background: var(--t3);
       flex-shrink: 0;
+      transition: background 0.4s ease;
     }
+    /* color the dot when data is loaded — JS adds a level class to .header */
+    .header.l-none     .loc-pulse { background: var(--c-none); }
+    .header.l-low      .loc-pulse { background: var(--c-low);  }
+    .header.l-medium   .loc-pulse { background: var(--c-med);  }
+    .header.l-high     .loc-pulse { background: var(--c-high); }
+    .header.l-very-high.loc-pulse { background: var(--c-vhi);  }
 
-    .summary-text strong {
-      font-size: 16px;
-      font-weight: 700;
-      letter-spacing: -0.2px;
-      display: block;
-    }
-
-    .summary-text .s-date { font-size: 13px; color: var(--text-2); }
-
-    .summary-right {
-      font-size: 12px;
-      color: var(--text-3);
-      text-align: right;
-      line-height: 1.55;
-    }
-
-    .summary-right strong { color: var(--text-2); font-weight: 600; }
-
-    .summary-div {
-      height: 1px;
-      background: var(--sep);
-      margin: 11px 0 9px;
-    }
-
-    .summary-meta { font-size: 11px; color: var(--text-3); }
-
-    /* ── Pollen Grid ── */
-    .pollen-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    /* ── Pollen Card ── */
-    .pollen-card {
-      background: var(--surface);
-      border-radius: 16px;
-      padding: 14px 16px 16px;
-      box-shadow: 0 1px 0 rgba(0,0,0,0.06), 0 2px 10px rgba(0,0,0,0.04);
-      animation: fadeUp 0.28s ease both;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .pollen-card { box-shadow: none; }
-    }
-
-    @media (hover: hover) {
-      .pollen-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
-      .pollen-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 20px rgba(0,0,0,0.09);
-      }
-    }
-
-    .pollen-card:nth-child(1)  { animation-delay:   0ms; }
-    .pollen-card:nth-child(2)  { animation-delay:  25ms; }
-    .pollen-card:nth-child(3)  { animation-delay:  50ms; }
-    .pollen-card:nth-child(4)  { animation-delay:  75ms; }
-    .pollen-card:nth-child(5)  { animation-delay: 100ms; }
-    .pollen-card:nth-child(6)  { animation-delay: 125ms; }
-    .pollen-card:nth-child(7)  { animation-delay: 150ms; }
-    .pollen-card:nth-child(8)  { animation-delay: 175ms; }
-    .pollen-card:nth-child(9)  { animation-delay: 200ms; }
-    .pollen-card:nth-child(10) { animation-delay: 225ms; }
-
-    .card-top {
+    /* ── Day tabs ── */
+    .day-tabs {
       display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
+      gap: 20px;
+    }
+
+    .day-tab {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--t3);
+      background: none;
+      border: none;
+      padding: 4px 0;
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 44px;
+      justify-content: center;
+      -webkit-user-select: none;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    .day-tab.active { color: var(--t1); font-weight: 700; }
+
+    .tab-date {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--t3);
+    }
+    .day-tab.active .tab-date { color: var(--t2); }
+
+    /* ── Hero (built by JS into #summary) ── */
+    .hero { margin-bottom: 52px; }
+
+    .hero-eyebrow {
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.10em;
+      color: var(--t3);
       margin-bottom: 10px;
     }
 
-    .card-name {
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: -0.2px;
+    .hero-level {
+      font-size: clamp(52px, 16vw, 76px);
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 0.88;
+      margin-bottom: 18px;
+      transition: color 0.5s ease;
     }
+    .hero-level.l-none      { color: var(--c-none); }
+    .hero-level.l-low       { color: var(--c-low);  }
+    .hero-level.l-medium    { color: var(--c-med);  }
+    .hero-level.l-high      { color: var(--c-high); }
+    .hero-level.l-very-high { color: var(--c-vhi);  }
 
-    .card-en   { font-size: 11px; color: var(--text-3); margin-top: 2px; }
-    .card-season { font-size: 10px; color: var(--text-3); margin-top: 1px; }
-    .card-icon { font-size: 20px; line-height: 1; }
-
-    .card-value-row {
+    .hero-meta {
       display: flex;
-      align-items: baseline;
-      gap: 3px;
-      margin-bottom: 9px;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--t2);
     }
+    .hero-meta strong { font-weight: 600; color: var(--t1); }
+    .hero-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--t3); flex-shrink: 0; }
 
-    .card-value {
-      font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif;
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -1px;
-      line-height: 1;
-    }
-
-    .card-unit { font-size: 12px; color: var(--text-3); }
-    .card-conc { font-size: 10px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
-
-    .level-row { display: flex; align-items: center; gap: 7px; }
-
-    .level-label {
+    /* ── Pollen list (built by JS into #content) ── */
+    .list-head {
       font-size: 10px;
-      font-weight: 600;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      white-space: nowrap;
-      flex-shrink: 0;
+      letter-spacing: 0.10em;
+      color: var(--t3);
+      margin-bottom: 2px;
     }
 
-    .level-track {
-      flex: 1;
-      height: 3px;
-      background: var(--sep);
-      border-radius: 1.5px;
+    .pollen-list { display: flex; flex-direction: column; }
+
+    .p-row {
+      display: grid;
+      grid-template-columns: 80px 1fr 76px;
+      align-items: center;
+      gap: 14px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--bdr);
+      animation: fadeIn 0.3s ease both;
+    }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    .p-row:nth-child(1)  { animation-delay:  0ms; }
+    .p-row:nth-child(2)  { animation-delay: 30ms; }
+    .p-row:nth-child(3)  { animation-delay: 60ms; }
+    .p-row:nth-child(4)  { animation-delay: 90ms; }
+    .p-row:nth-child(5)  { animation-delay:120ms; }
+
+    .p-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--t1);
+      white-space: nowrap;
+    }
+
+    .p-track {
+      height: 2px;
+      border-radius: 1px;
+      background: var(--bdr);
+      position: relative;
       overflow: hidden;
     }
-
-    .level-fill {
-      height: 100%;
-      border-radius: 1.5px;
-      transition: width 0.5s cubic-bezier(0.4,0,0.2,1);
+    .p-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: var(--pct, 0%);
+      border-radius: 1px;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    /* ── Level States ── */
-    .l-none .card-value  { color: var(--text-3); }
-    .l-none .level-label { color: var(--text-3); }
-    .l-none .level-fill  { background: var(--c-none); }
-    .dot-none            { background: rgba(120,120,128,0.4); }
+    .l-none     .p-fill { background: var(--c-none); opacity: 0.35; }
+    .l-low      .p-fill { background: var(--c-low);  }
+    .l-medium   .p-fill { background: var(--c-med);  }
+    .l-high     .p-fill { background: var(--c-high); }
+    .l-very-high.p-fill { background: var(--c-vhi);  }
+    .p-row.l-very-high .p-fill { background: var(--c-vhi); }
 
-    .l-low .card-value   { color: var(--c-low-t); }
-    .l-low .level-label  { color: var(--c-low-t); }
-    .l-low .level-fill   { background: var(--c-low); }
-    .dot-low             { background: var(--c-low); }
+    .p-val {
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      white-space: nowrap;
+      transition: color 0.5s ease;
+    }
+    .p-val .u { font-size: 10px; font-weight: 400; color: var(--t3); margin-left: 2px; }
 
-    .l-medium .card-value  { color: var(--c-med-t); }
-    .l-medium .level-label { color: var(--c-med-t); }
-    .l-medium .level-fill  { background: var(--c-med); }
-    .dot-medium            { background: var(--c-med); }
+    .p-row.l-none      .p-val { color: var(--t3); font-weight: 400; }
+    .p-row.l-low       .p-val { color: var(--c-low);  }
+    .p-row.l-medium    .p-val { color: var(--c-med);  }
+    .p-row.l-high      .p-val { color: var(--c-high); }
+    .p-row.l-very-high .p-val { color: var(--c-vhi);  }
 
-    .l-high .card-value  { color: var(--c-high-t); }
-    .l-high .level-label { color: var(--c-high-t); }
-    .l-high .level-fill  { background: var(--c-high); }
-    .dot-high            { background: var(--c-high); }
+    /* ── No-pollen group ── */
+    .no-pollen {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 13px 0 0;
+    }
+    .np-label {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.09em;
+      color: var(--t3); white-space: nowrap;
+    }
+    .np-list { font-size: 12px; color: var(--t3); line-height: 1.7; }
 
-    .l-very-high .card-value  { color: var(--c-vhi-t); }
-    .l-very-high .level-label { color: var(--c-vhi-t); }
-    .l-very-high .level-fill  { background: var(--c-vhi); }
-    .dot-very-high            { background: var(--c-vhi); }
+    /* ── Stand / source line ── */
+    .stand-line {
+      margin-top: 20px;
+      font-size: 11px;
+      color: var(--t3);
+      line-height: 1.7;
+    }
 
-    .l-nodata { opacity: 0.35; }
-
-    .card-nodata { font-size: 12px; color: var(--text-3); padding-top: 8px; }
-
-    /* ── State Views ── */
+    /* ── State views ── */
     .state-view {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 80px 24px;
+      padding: 80px 0;
       gap: 12px;
     }
-
-    .state-view p { font-size: 14px; color: var(--text-2); text-align: center; }
+    .state-view p { font-size: 14px; color: var(--t2); text-align: center; }
+    .state-view .err-detail { font-size: 11px; color: var(--t3); }
 
     .spinner {
-      width: 26px;
-      height: 26px;
-      border: 2px solid var(--sep);
+      width: 22px; height: 22px;
+      border: 2px solid var(--bdr);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-
-    @keyframes spin   { to { transform: rotate(360deg); } }
-    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     .retry-btn {
-      background: var(--accent);
-      color: #fff;
+      margin-top: 4px;
+      background: var(--t1);
+      color: var(--bg);
       border: none;
-      border-radius: 12px;
-      padding: 11px 24px;
+      border-radius: 22px;
+      padding: 10px 22px;
       font-family: inherit;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       touch-action: manipulation;
       min-height: 44px;
     }
 
-    /* ── Location Picker ── */
+    /* ── Location picker ── */
     .location-picker { padding: 4px 0 8px; }
 
     .picker-hint {
-      font-size: 15px;
-      color: var(--text-2);
-      line-height: 1.5;
-      margin-bottom: 24px;
+      font-size: 14px; color: var(--t2); line-height: 1.55; margin-bottom: 24px;
     }
-
-    .picker-hint strong { color: var(--text-1); display: block; font-size: 17px; margin-bottom: 4px; }
+    .picker-hint strong { color: var(--t1); display: block; font-size: 16px; margin-bottom: 4px; }
 
     .picker-section { margin-bottom: 20px; }
-
     .picker-section-label {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      color: var(--text-3);
-      margin-bottom: 10px;
-      padding-left: 2px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--t3); margin-bottom: 10px;
     }
-
     .picker-pills { display: flex; flex-wrap: wrap; gap: 8px; }
 
     .picker-pill {
-      background: var(--surface);
-      border: none;
+      background: none;
+      border: 1px solid var(--bdr);
       border-radius: 20px;
-      padding: 8px 16px;
-      font-family: inherit;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-1);
-      cursor: pointer;
-      touch-action: manipulation;
-      min-height: 36px;
-      box-shadow: 0 1px 0 rgba(0,0,0,0.07), 0 2px 8px rgba(0,0,0,0.04);
-      -webkit-user-select: none;
-      user-select: none;
+      padding: 7px 15px;
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      color: var(--t1); cursor: pointer;
+      touch-action: manipulation; min-height: 36px;
+      -webkit-user-select: none; user-select: none;
     }
-
-    @media (prefers-color-scheme: dark) {
-      .picker-pill { box-shadow: none; background: var(--surface2); }
-    }
-
     .picker-pill:active { opacity: 0.6; }
 
     .picker-retry {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      background: none;
-      border: none;
-      font-family: inherit;
-      font-size: 15px;
-      font-weight: 500;
-      color: var(--accent);
-      cursor: pointer;
-      touch-action: manipulation;
-      padding: 0;
-      min-height: 44px;
-      margin-bottom: 20px;
+      display: flex; align-items: center; gap: 6px;
+      background: none; border: none;
+      font-family: inherit; font-size: 14px; font-weight: 500;
+      color: var(--accent); cursor: pointer;
+      touch-action: manipulation; padding: 0; min-height: 44px; margin-bottom: 20px;
     }
 
     /* ── Footer ── */
     .footer {
-      margin-top: 40px;
-      text-align: center;
-      font-size: 11.5px;
-      color: var(--text-3);
-      line-height: 1.9;
+      margin-top: 48px;
+      font-size: 11px;
+      color: var(--t3);
+      line-height: 2.0;
     }
-
-    .footer a { color: var(--text-3); text-decoration: underline; text-decoration-color: var(--sep); }
-
-    /* ── Responsive ── */
-    @media (max-width: 400px) {
-      .pollen-grid { grid-template-columns: 1fr; }
-      .app-title { font-size: 28px; }
-    }
+    .footer a { color: var(--t3); text-decoration: underline; text-decoration-color: var(--bdr); }
   </style>
 </head>
 <body>
+
+  <!-- Atmospheric level glow -->
+  <div class="glow-ring" id="glowRing"></div>
+
   <div class="app">
 
-    <header class="header">
-      <div>
-        <h1 class="app-title">Pollenflug</h1>
-        <button class="location-btn" id="geoBtn" aria-label="Standort aktualisieren">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-            <circle cx="12" cy="10" r="3"/>
-          </svg>
-          <span id="locationName">Standort ermitteln …</span>
+    <header class="header" id="appHeader">
+      <button class="location-btn" id="geoBtn" aria-label="Standort aktualisieren">
+        <span class="loc-pulse"></span>
+        <span id="locationName">Standort ermitteln …</span>
+      </button>
+      <nav class="day-tabs" id="dayTabs" aria-label="Tagauswahl">
+        <button class="day-tab active" data-day="0">
+          Heute
+          <span class="tab-date" id="tabDate0"></span>
         </button>
-      </div>
-      <div class="app-icon" aria-hidden="true">🌿</div>
+        <button class="day-tab" data-day="1">
+          Morgen
+          <span class="tab-date" id="tabDate1"></span>
+        </button>
+        <button class="day-tab" data-day="2">
+          Üb.
+          <span class="tab-date" id="tabDate2"></span>
+        </button>
+      </nav>
     </header>
 
-    <nav class="segmented" id="dayTabs" aria-label="Tagauswahl">
-      <button class="seg active" data-day="0">
-        Heute
-        <span class="seg-sub" id="tabDate0"></span>
-      </button>
-      <button class="seg" data-day="1">
-        Morgen
-        <span class="seg-sub" id="tabDate1"></span>
-      </button>
-      <button class="seg" data-day="2">
-        Übermorgen
-        <span class="seg-sub" id="tabDate2"></span>
-      </button>
-    </nav>
+    <!-- Hero (populated by render()) -->
+    <div id="summary" style="display:none;"></div>
 
-    <div class="summary" id="summary" style="display:none;"></div>
+    <!-- Pollen list (populated by render()) -->
     <div id="content"></div>
 
     <footer class="footer">
@@ -596,16 +505,15 @@
     '3':   { level: 'high',   num: 3   },
   };
 
-  const LEVELS     = ['none', 'low', 'medium', 'high', 'very-high'];
-  const LEVEL_DE   = { none: 'Kein Flug', low: 'Niedrig', medium: 'Mittel', high: 'Hoch', 'very-high': 'Sehr hoch' };
-  const SUMMARY_DE = { none: 'Kaum Belastung', low: 'Geringe Belastung', medium: 'Mittlere Belastung', high: 'Hohe Belastung', 'very-high': 'Sehr hohe Belastung' };
+  const LEVELS      = ['none', 'low', 'medium', 'high', 'very-high'];
+  const SUMMARY_DE  = { none: 'Kaum Belastung', low: 'Geringe Belastung', medium: 'Mittlere Belastung', high: 'Hohe Belastung', 'very-high': 'Sehr hohe Belastung' };
 
   // ─── State ───────────────────────────────────────────────────────────────────
   const state = {
-    locationKey: 'munich',
-    selectedDay: 0,
-    data: null,
-    customCoords: null,
+    locationKey:   'munich',
+    selectedDay:   0,
+    data:          null,
+    customCoords:  null,
     dataTimestamp: null,
   };
 
@@ -625,11 +533,18 @@
 
   function fmtDataTimestamp(ts) {
     if (!ts) return '';
-    const [datePart, ...rest] = ts.split(' ');
-    const date = new Date(datePart + 'T12:00:00');
-    const dateStr = date.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
-    const timeMatch = rest.join(' ').match(/\d{2}:\d{2}/);
-    return timeMatch ? `${dateStr}, ${timeMatch[0]} Uhr` : dateStr;
+    let date, timeStr;
+    if (/^\d{4}-\d{2}-\d{2}T/.test(ts)) {
+      date = new Date(ts);
+      timeStr = date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+    } else {
+      const [datePart, ...rest] = ts.split(' ');
+      date = new Date(datePart + 'T12:00:00');
+      const m = ts.match(/\d{2}:\d{2}/);
+      timeStr = m ? m[0] : null;
+    }
+    const dateStr = date.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', timeZone: 'Europe/Berlin' });
+    return timeStr ? `${dateStr}, ${timeStr} Uhr` : dateStr;
   }
 
   // ─── DWD API ─────────────────────────────────────────────────────────────────
@@ -717,7 +632,7 @@
             : v < thr[2] ? 'high' : 'very-high';
           const display = v < 1 ? '0' : Math.round(v).toLocaleString('de-DE');
           let pct;
-          if (v < 0.5)        pct = 0;
+          if (v < 0.5)         pct = 0;
           else if (v < thr[0]) pct = Math.round((v / thr[0]) * 33);
           else if (v < thr[1]) pct = Math.round(33 + (v - thr[0]) / (thr[1] - thr[0]) * 33);
           else                 pct = Math.min(Math.round(66 + (v - thr[1]) / (thr[2] - thr[1]) * 34), 100);
@@ -745,18 +660,14 @@
 
   function processLGL(raw, stationId) {
     const result = {};
-    let dataDate = null;
+    let maxToTs = null;
     for (const m of raw.measurements) {
       if (m.location !== stationId) continue;
       const appKey = LGL_MAP[m.polle];
       if (!appKey) continue;
       const maxVal = Math.max(...m.data.map(d => d.value || 0));
       for (const d of m.data) {
-        const dateRaw = d.date ?? d.datum ?? d.datetime ?? d.day ?? d.timestamp ?? null;
-        if (dateRaw) {
-          const ds = String(dateRaw).split('T')[0];
-          if (!dataDate || ds > dataDate) dataDate = ds;
-        }
+        if (d.to != null && (maxToTs == null || d.to > maxToTs)) maxToTs = d.to;
       }
       const thr = LGL_THR[m.polle] || [1, 20, 200, 1000];
       const level = maxVal < thr[0] ? 'none'
@@ -771,6 +682,7 @@
       else                      pct = Math.min(Math.round(83 + (maxVal - thr[2]) / (thr[3] - thr[2]) * 17), 100);
       result[appKey] = { level, display, unit: 'K/m³', source: 'lgl', pct };
     }
+    const dataDate = maxToTs != null ? new Date(maxToTs * 1000).toISOString() : null;
     return Object.keys(result).length > 0 ? { data: result, dataDate } : null;
   }
 
@@ -824,13 +736,13 @@
           fetchOM(loc.lat, loc.lon).then(processOM),
           lglStation ? fetchLGL().then(raw => processLGL(raw, lglStation)) : Promise.resolve(null),
         ]);
-        const dwdVal = dwdResult.status  === 'fulfilled' ? dwdResult.value  : null;
-        dwdDays  = dwdVal?.days ?? null;
+        const dwdVal       = dwdResult.status === 'fulfilled' ? dwdResult.value : null;
+        dwdDays            = dwdVal?.days ?? null;
         const dwdLastUpdate = dwdVal?.lastUpdate ?? null;
-        omDays   = omResult.status   === 'fulfilled' ? omResult.value   : null;
-        const lglVal = lglResult.status === 'fulfilled' ? lglResult.value : null;
-        lglToday = lglVal?.data ?? null;
-        const lglDataDate = lglVal?.dataDate ?? null;
+        omDays             = omResult.status === 'fulfilled' ? omResult.value : null;
+        const lglVal       = lglResult.status === 'fulfilled' ? lglResult.value : null;
+        lglToday           = lglVal?.data ?? null;
+        const lglDataDate  = lglVal?.dataDate ?? null;
         if (dwdDays === null && omDays === null && lglToday === null)
           throw new Error('Alle Datenquellen nicht verfügbar');
         state.dataTimestamp = lglDataDate ?? dwdLastUpdate ?? null;
@@ -847,15 +759,14 @@
     }
   }
 
-  // ─── Location picker (fallback when GPS unavailable) ─────────────────────────
+  // ─── Location picker ─────────────────────────────────────────────────────────
   function showLocationPicker(permissionDenied) {
-    const nameEl = document.getElementById('locationName');
-    nameEl.textContent = 'Standort wählen';
+    document.getElementById('locationName').textContent = 'Standort wählen';
     document.getElementById('summary').style.display = 'none';
+    document.getElementById('glowRing').className = 'glow-ring';
 
     const DE_KEYS = ['pfarrkirchen','munich','nuremberg','augsburg','ingolstadt','regensburg','stuttgart','freiburg','ulm','constance'];
     const AT_KEYS = ['vienna','salzburg','innsbruck','graz','linz','klagenfurt','bregenz'];
-
     const pills = keys => keys.map(k =>
       `<button class="picker-pill" data-key="${k}">${LOCATIONS[k].name}</button>`
     ).join('');
@@ -904,10 +815,7 @@
     const btn    = document.getElementById('geoBtn');
     const nameEl = document.getElementById('locationName');
 
-    if (!navigator.geolocation) {
-      showLocationPicker(false);
-      return;
-    }
+    if (!navigator.geolocation) { showLocationPicker(false); return; }
 
     btn.classList.add('loading');
     nameEl.textContent = 'Standort wird ermittelt …';
@@ -951,7 +859,12 @@
   }
 
   // ─── Render ──────────────────────────────────────────────────────────────────
+  function setGlow(level) {
+    document.getElementById('glowRing').className = `glow-ring l-${level}`;
+  }
+
   function showLoading() {
+    setGlow('');
     document.getElementById('summary').style.display = 'none';
     document.getElementById('content').innerHTML = `
       <div class="state-view">
@@ -961,12 +874,14 @@
   }
 
   function showError(msg) {
+    setGlow('');
     document.getElementById('summary').style.display = 'none';
     document.getElementById('content').innerHTML = `
       <div class="state-view">
-        <p style="font-size:28px;">⚠️</p>
+        <p style="font-size:24px">⚠️</p>
         <p>Daten konnten nicht geladen werden.</p>
-        <p style="font-size:12px;color:var(--text-3);">${msg}</p>
+        <p class="err-detail">${msg}</p>
+        <button class="retry-btn" onclick="location.reload()">Neu laden</button>
       </div>`;
   }
 
@@ -975,11 +890,13 @@
     const dayData = state.data[state.selectedDay];
     if (!dayData) return showError('Prognosedaten nicht verfügbar');
 
+    // Update tab dates
     state.data.forEach((day, i) => {
       const el = document.getElementById(`tabDate${i}`);
       if (el && day?.date) el.textContent = fmtDate(day.date);
     });
 
+    // Overall level & dominant pollen
     const levelsWithData = POLLEN
       .filter(p => dayData.pollens[p.key] !== null)
       .map(p => dayData.pollens[p.key]?.level ?? 'none');
@@ -993,89 +910,89 @@
       if (idx > domIdx) { domIdx = idx; dominant = p; }
     }
 
+    // Glow
+    setGlow(overall);
+
+    // Sources & stand
     const SOURCE_LABELS = { lgl: 'LGL Bayern ePIN', dwd: 'DWD', om: 'Open-Meteo' };
     const usedSources = new Set();
     for (const p of POLLEN) {
       const src = dayData.pollens[p.key]?.source;
       if (src) usedSources.add(src);
     }
-    const sourceText  = [...usedSources].map(s => SOURCE_LABELS[s] || s).join(' · ');
-    const standText = fmtDataTimestamp(state.dataTimestamp);
+    const sourceText = [...usedSources].map(s => SOURCE_LABELS[s] || s).join(' · ');
+    const standText  = fmtDataTimestamp(state.dataTimestamp);
+
+    // ── Hero ──
+    const words = SUMMARY_DE[overall].split(' ');
+    const heroHtml = words.slice(0, -1).join(' ') + '<br>' + words[words.length - 1];
+    const dominantLabel = dominant && domIdx > 0
+      ? `Hauptbelastung: <strong>${dominant.name}</strong>`
+      : 'Keine aktiven Pollen';
 
     const summaryEl = document.getElementById('summary');
     summaryEl.style.display = 'block';
     summaryEl.innerHTML = `
-      <div class="summary-row">
-        <div class="summary-left">
-          <div class="summary-dot dot-${overall}"></div>
-          <div class="summary-text">
-            <strong>${SUMMARY_DE[overall]}</strong>
-            <span class="s-date">${fmtDate(dayData.date)}</span>
-          </div>
+      <div class="hero">
+        <div class="hero-eyebrow">Pollenbelastung</div>
+        <div class="hero-level l-${overall}">${heroHtml}</div>
+        <div class="hero-meta">
+          <span>${fmtDate(dayData.date)}</span>
+          <span class="hero-sep"></span>
+          <span>${dominantLabel}</span>
         </div>
-        <div class="summary-right">
-          ${dominant && domIdx > 0
-            ? `Hauptbelastung<br><strong>${dominant.name}</strong>`
-            : 'Keine aktiven Pollen'}
-        </div>
-      </div>
-      <div class="summary-div"></div>
-      <div class="summary-meta">
-        Quelle: ${sourceText}${standText ? ` &middot; Stand: ${standText}` : ''}
       </div>`;
 
-    const grid = document.createElement('div');
-    grid.className = 'pollen-grid';
-
+    // ── Pollen list ──
     const sortedPollen = [...POLLEN].sort((a, b) => {
       const aE = dayData.pollens[a.key];
       const bE = dayData.pollens[b.key];
-      if (!aE && !bE) return 0;
-      if (!aE) return 1;
-      if (!bE) return -1;
+      if (!aE && !bE) return 0; if (!aE) return 1; if (!bE) return -1;
       return LEVELS.indexOf(bE.level) - LEVELS.indexOf(aE.level);
     });
 
-    for (const p of sortedPollen) {
+    const active   = sortedPollen.filter(p => dayData.pollens[p.key]?.level !== 'none' && dayData.pollens[p.key] !== null);
+    const noFlight = sortedPollen.filter(p => !dayData.pollens[p.key] || dayData.pollens[p.key].level === 'none');
+
+    const wrap = document.createElement('div');
+
+    const lh = document.createElement('div');
+    lh.className = 'list-head';
+    lh.textContent = 'Pollenarten';
+    wrap.appendChild(lh);
+
+    const list = document.createElement('div');
+    list.className = 'pollen-list';
+
+    for (const p of active) {
       const entry = dayData.pollens[p.key];
-      const card  = document.createElement('div');
-      if (!entry) {
-        card.className = 'pollen-card l-nodata';
-        card.innerHTML = `
-          <div class="card-top">
-            <div>
-              <div class="card-name">${p.name}</div>
-              <div class="card-en">${p.en}</div>
-              <div class="card-season">${p.season}</div>
-            </div>
-            <span class="card-icon">${p.icon}</span>
-          </div>
-          <div class="card-nodata">Keine Daten</div>`;
-      } else {
-        card.className = `pollen-card l-${entry.level}`;
-        card.innerHTML = `
-          <div class="card-top">
-            <div>
-              <div class="card-name">${p.name}</div>
-              <div class="card-en">${p.en}</div>
-              <div class="card-season">${p.season}</div>
-            </div>
-            <span class="card-icon">${p.icon}</span>
-          </div>
-          <div class="card-value-row">
-            <span class="card-value">${entry.display}</span>
-            <span class="card-unit">${entry.unit}</span>
-            ${entry.omDisplay && entry.omDisplay !== '0' ? `<span class="card-conc">~${entry.omDisplay} K/m³</span>` : ''}
-          </div>
-          <div class="level-row">
-            <span class="level-label">${LEVEL_DE[entry.level]}</span>
-            <div class="level-track"><div class="level-fill" style="width:${entry.pct ?? 0}%"></div></div>
-          </div>`;
-      }
-      grid.appendChild(card);
+      const row = document.createElement('div');
+      row.className = `p-row l-${entry.level}`;
+      row.style.setProperty('--pct', `${entry.pct ?? 0}%`);
+      row.innerHTML = `
+        <div class="p-name">${p.name}</div>
+        <div class="p-track"><div class="p-fill"></div></div>
+        <div class="p-val">${entry.display}<span class="u">${entry.unit}</span></div>`;
+      list.appendChild(row);
     }
 
-    document.getElementById('content').replaceChildren(grid);
+    if (noFlight.length > 0) {
+      const nf = document.createElement('div');
+      nf.className = 'no-pollen';
+      nf.innerHTML = `
+        <span class="np-label">Kein Flug</span>
+        <span class="np-list">${noFlight.map(p => p.name).join(' · ')}</span>`;
+      list.appendChild(nf);
+    }
+
+    wrap.appendChild(list);
+
+    const sl = document.createElement('div');
+    sl.className = 'stand-line';
+    sl.textContent = sourceText + (standText ? ' · Stand: ' + standText : '');
+    wrap.appendChild(sl);
+
+    document.getElementById('content').replaceChildren(wrap);
   }
 
   // ─── Tabs & date labels ───────────────────────────────────────────────────────
@@ -1090,14 +1007,14 @@
   }
 
   function syncTabs() {
-    document.querySelectorAll('.seg').forEach(t => {
+    document.querySelectorAll('.day-tab').forEach(t => {
       t.classList.toggle('active', parseInt(t.dataset.day) === state.selectedDay);
     });
   }
 
   // ─── Events ──────────────────────────────────────────────────────────────────
   document.getElementById('dayTabs').addEventListener('click', e => {
-    const tab = e.target.closest('.seg');
+    const tab = e.target.closest('.day-tab');
     if (!tab) return;
     state.selectedDay = parseInt(tab.dataset.day, 10);
     syncTabs();
