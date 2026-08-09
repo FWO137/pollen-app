@@ -352,6 +352,11 @@
     }
     .picker-hint strong { color: var(--t1); display: block; font-size: 16px; margin-bottom: 4px; }
 
+    .picker-debug {
+      font-size: 11px; font-family: ui-monospace, monospace; color: var(--t3);
+      line-height: 1.5; margin: -14px 0 20px; word-break: break-word;
+    }
+
     .picker-section { margin-bottom: 20px; }
     .picker-section-label {
       font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -760,7 +765,7 @@
   }
 
   // ─── Location picker ─────────────────────────────────────────────────────────
-  function showLocationPicker(permissionDenied) {
+  function showLocationPicker(permissionDenied, debugInfo) {
     document.getElementById('locationName').textContent = 'Standort wählen';
     document.getElementById('summary').style.display = 'none';
     document.getElementById('glowRing').className = 'glow-ring';
@@ -785,9 +790,14 @@
       ? '<strong>Standortzugriff nicht erlaubt</strong>In Safari: Adressleiste → <b>AA</b> → Website-Einstellungen → Standort → <b>Erlauben</b>. Danach diese Seite neu laden.'
       : '<strong>Standort nicht ermittelbar</strong>Prüfe unter Einstellungen → Datenschutz &amp; Sicherheit → Ortungsdienste, dass die Ortungsdienste sowie der Zugriff für Safari aktiviert sind. Oder wähle einen Ort:';
 
+    const debugRow = debugInfo
+      ? `<p class="picker-debug">Diagnose: ${debugInfo}</p>`
+      : '';
+
     document.getElementById('content').innerHTML = `
       <div class="location-picker">
         <p class="picker-hint">${hint}</p>
+        ${debugRow}
         ${retryRow}
         <div class="picker-section">
           <div class="picker-section-label">Bayern &amp; Baden-Württemberg</div>
@@ -815,7 +825,10 @@
     const btn    = document.getElementById('geoBtn');
     const nameEl = document.getElementById('locationName');
 
-    if (!navigator.geolocation) { showLocationPicker(false); return; }
+    if (!navigator.geolocation) {
+      showLocationPicker(false, 'navigator.geolocation nicht verfügbar (kein HTTPS oder nicht unterstützt).');
+      return;
+    }
 
     btn.classList.add('loading');
     nameEl.textContent = 'Standort wird ermittelt …';
@@ -834,9 +847,13 @@
       loadData();
     };
 
+    const ERR_NAMES = { 1: 'PERMISSION_DENIED', 2: 'POSITION_UNAVAILABLE', 3: 'TIMEOUT' };
+
     const onFinalError = (err) => {
       btn.classList.remove('loading');
-      showLocationPicker(err.code === 1);
+      console.error('Geolocation error', err.code, err.message);
+      const info = `Code ${err.code} (${ERR_NAMES[err.code] || 'unbekannt'})${err.message ? ' – ' + err.message : ''}`;
+      showLocationPicker(err.code === 1, info);
     };
 
     navigator.geolocation.getCurrentPosition(
