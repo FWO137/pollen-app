@@ -17,6 +17,32 @@ async function stubMunichGeolocation(page) {
   });
 }
 
+// Lets a test fast-forward Date.now() (window.__advanceClock(ms)) and force
+// document.visibilityState (window.__setVisible(bool)) without waiting real
+// wall-clock minutes or needing a real backgrounded tab.
+async function installControllableClock(page) {
+  await page.addInitScript(() => {
+    const RealDate = Date;
+    let offset = 0;
+    class FakeDate extends RealDate {
+      constructor(...args) {
+        if (args.length === 0) return new RealDate(RealDate.now() + offset);
+        return new RealDate(...args);
+      }
+      static now() { return RealDate.now() + offset; }
+    }
+    window.Date = FakeDate;
+    window.__advanceClock = (ms) => { offset += ms; };
+
+    let visible = true;
+    Object.defineProperty(document, 'visibilityState', { get: () => (visible ? 'visible' : 'hidden') });
+    window.__setVisible = (v) => {
+      visible = v;
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+  });
+}
+
 test.describe('pollen-logic.js load failure', () => {
   // Regression test: before this guard existed, a failed pollen-logic.js
   // load left the app hanging forever on "Standort wird ermittelt …" with
@@ -100,5 +126,43 @@ test.describe('refresh race condition', () => {
     // If the race guard is broken, request #1's stale "very-high grass"
     // result (which answers last) would win and show a Gräser row.
     await expect(page.locator('.p-row', { hasText: 'Gräser' })).toHaveCount(0);
+  });
+});
+
+test.describe('staleness refresh on return-to-tab', () => {
+  // Regression test: previously nothing re-fetched on its own — a tab left
+  // open past DWD's once-a-day / LGL's hourly refresh cadence (or simply
+  // backgrounded and returned to later) kept showing the same data
+  // indefinitely, with no trigger to reload it.
+  test('re-fetches once the tab becomes visible again after 30+ minutes, but not sooner', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await installControllableClock(page);
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+
+    let omCalls = 0;
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => {
+      omCalls++;
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(OM_FIXTURE) });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    expect(omCalls).toBe(1);
+
+    // Tab briefly hidden and visible again well within the staleness
+    // window — must NOT trigger a second fetch.
+    await page.evaluate(() => window.__setVisible(false));
+    await page.evaluate(() => window.__advanceClock(2 * 60 * 1000)); // +2 min
+    await page.evaluate(() => window.__setVisible(true));
+    await page.waitForTimeout(300);
+    expect(omCalls).toBe(1);
+
+    // Now push well past the 30-minute staleness threshold and return to
+    // the tab again — this time it must refetch.
+    await page.evaluate(() => window.__setVisible(false));
+    await page.evaluate(() => window.__advanceClock(31 * 60 * 1000)); // +31 min more (33 min total)
+    await page.evaluate(() => window.__setVisible(true));
+    await expect.poll(() => omCalls, { timeout: 5000 }).toBe(2);
   });
 });
