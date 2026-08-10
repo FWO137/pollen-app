@@ -468,16 +468,16 @@
         <span class="loc-pulse"></span>
         <span id="locationName">Standort ermitteln …</span>
       </button>
-      <nav class="day-tabs" id="dayTabs" aria-label="Tagauswahl">
-        <button class="day-tab active" data-day="0">
+      <nav class="day-tabs" id="dayTabs" aria-label="Tagauswahl" role="tablist">
+        <button class="day-tab active" data-day="0" role="tab" aria-selected="true">
           Heute
           <span class="tab-date" id="tabDate0"></span>
         </button>
-        <button class="day-tab" data-day="1">
+        <button class="day-tab" data-day="1" role="tab" aria-selected="false">
           Morgen
           <span class="tab-date" id="tabDate1"></span>
         </button>
-        <button class="day-tab" data-day="2">
+        <button class="day-tab" data-day="2" role="tab" aria-selected="false">
           Üb.
           <span class="tab-date" id="tabDate2"></span>
         </button>
@@ -606,7 +606,16 @@
       const raw = localStorage.getItem(CACHE_KEY);
       if (!raw) return null;
       const c = JSON.parse(raw);
-      return c?.data?.length ? c : null;
+      if (!c?.data?.length) return null;
+      // localStorage is an external boundary — a locationKey that no longer
+      // exists in LOCATIONS (stale cache from an older version of this app,
+      // or hand-edited) combined with no GPS coords to fall back on would
+      // otherwise crash loadData() trying to read .lgl off an undefined
+      // "snapped" location. Fall back to a known-good default instead.
+      if (!c.customCoords && !LOCATIONS[c.locationKey]) {
+        c.locationKey = 'munich';
+      }
+      return c;
     } catch {
       return null;
     }
@@ -759,6 +768,14 @@
   // `background: true` is used for the silent refresh that follows a
   // cache-hydrated render at startup: it must not blank out the already
   // visible cached view with the spinner/picker while it re-checks GPS.
+  // Beyond SNAP_MAX_KM, loadData() already avoids misattributing a distant
+  // city's DWD/LGL station — but the label itself still needs to say so,
+  // otherwise "Nürnberg" reads as an exact match for someone in Berlin.
+  function locationLabel(key, distanceKm) {
+    const name = LOCATIONS[key]?.name ?? 'Standort';
+    return distanceKm != null && distanceKm > SNAP_MAX_KM ? `≈ ${name}` : name;
+  }
+
   function requestGeo({ background = false } = {}) {
     const btn    = document.getElementById('geoBtn');
     const nameEl = document.getElementById('locationName');
@@ -782,7 +799,7 @@
       state.locationKey    = nearest;
       state.customCoords   = { lat: coords.latitude, lon: coords.longitude };
       state.snapDistanceKm = distanceKm;
-      nameEl.textContent = LOCATIONS[nearest].name;
+      nameEl.textContent = locationLabel(nearest, distanceKm);
       loadData({ silent: background && !!state.data });
     };
 
@@ -980,7 +997,9 @@
 
   function syncTabs() {
     document.querySelectorAll('.day-tab').forEach(t => {
-      t.classList.toggle('active', parseInt(t.dataset.day) === state.selectedDay);
+      const isActive = parseInt(t.dataset.day) === state.selectedDay;
+      t.classList.toggle('active', isActive);
+      t.setAttribute('aria-selected', String(isActive));
     });
   }
 
