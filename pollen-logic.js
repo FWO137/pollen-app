@@ -148,17 +148,32 @@
     return { level: e.level, display, unit: '/ 3', source: 'dwd', pct: Math.round(e.num / 3 * 100) };
   }
 
-  function extractDWDDays(raw, partregionId) {
+  const DWD_FIELDS = ['today', 'tomorrow', 'dayafter_to'];
+
+  // `referenceDate` is the real current moment (injectable for tests).
+  // DWD publishes once a day; its `last_update` (and hence its 'today'
+  // field) can still describe *yesterday* in the hours before that day's
+  // refresh lands. Anchoring the 3-day window on `last_update` — like this
+  // function used to — silently mislabels a stale forecast as "today"
+  // instead of comparing it against the real current date and shifting
+  // which DWD field ('today'/'tomorrow'/'dayafter_to') maps to which real
+  // calendar day, dropping whatever falls outside DWD's 3-day window.
+  function extractDWDDays(raw, partregionId, referenceDate = new Date()) {
     const region = raw.content.find(r => r.partregion_id === partregionId);
     if (!region) return null;
-    const base = new Date(raw.last_update.split(' ')[0] + 'T12:00:00');
     const p = region.Pollen;
-    const days = ['today', 'tomorrow', 'dayafter_to'].map((field, i) => {
-      const d = new Date(base);
+
+    const lastUpdateDate = new Date(raw.last_update.split(' ')[0] + 'T12:00:00');
+    const today = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate(), 12);
+    const staleDays = Math.round((today - lastUpdateDate) / 86400000);
+
+    const days = [0, 1, 2].map(i => {
+      const d = new Date(today);
       d.setDate(d.getDate() + i);
+      const field = DWD_FIELDS[staleDays + i]; // undefined if outside DWD's window
       return {
         date: d.toISOString().split('T')[0],
-        dwd: {
+        dwd: field ? {
           hazel:   parseDwdVal(p.Hasel?.[field]),
           alder:   parseDwdVal(p.Erle?.[field]),
           ash:     parseDwdVal(p.Esche?.[field]),
@@ -167,7 +182,7 @@
           rye:     parseDwdVal(p.Roggen?.[field]),
           mugwort: parseDwdVal(p.Beifuss?.[field]),
           ragweed: parseDwdVal(p.Ambrosia?.[field]),
-        },
+        } : null,
       };
     });
     return { days, lastUpdate: raw.last_update };

@@ -77,7 +77,7 @@ test('parseDwdVal: "-1" and unknown codes are null (no data)', () => {
   assert.equal(parseDwdVal('nonsense'), null);
 });
 
-test('extractDWDDays: reads the matching partregion and produces 3 days', () => {
+test('extractDWDDays: reads the matching partregion and produces 3 days when last_update is today', () => {
   const raw = {
     last_update: '2026-08-09 12:00',
     content: [
@@ -90,9 +90,12 @@ test('extractDWDDays: reads the matching partregion and produces 3 days', () => 
       },
     ],
   };
-  const result = extractDWDDays(raw, 121);
+  // last_update's date matches "today" -> no staleness, straight 0/1/2 mapping.
+  const referenceDate = new Date(2026, 7, 9, 10, 0);
+  const result = extractDWDDays(raw, 121, referenceDate);
   assert.equal(result.days.length, 3);
   assert.equal(result.lastUpdate, '2026-08-09 12:00');
+  assert.equal(result.days[0].date, '2026-08-09');
   assert.equal(result.days[0].dwd.birch.level, 'low');
   assert.equal(result.days[1].dwd.birch.level, 'medium');
   assert.equal(result.days[2].dwd.birch.level, 'none'); // '0' is a valid code, not "no data"
@@ -100,7 +103,42 @@ test('extractDWDDays: reads the matching partregion and produces 3 days', () => 
 
 test('extractDWDDays: unknown partregion returns null', () => {
   const raw = { last_update: '2026-08-09 12:00', content: [{ partregion_id: 999, Pollen: {} }] };
-  assert.equal(extractDWDDays(raw, 121), null);
+  assert.equal(extractDWDDays(raw, 121, new Date(2026, 7, 9)), null);
+});
+
+test('extractDWDDays: a last_update stuck on yesterday (not-yet-refreshed) does not mislabel stale data as "today"', () => {
+  // Regression test for a real bug: before DWD's daily refresh lands,
+  // last_update can still be yesterday's date. The 3-day window must stay
+  // anchored on the real current date, shifting which DWD field maps to
+  // which calendar day instead of presenting yesterday's now-elapsed
+  // "today" forecast as if it were current.
+  const raw = {
+    last_update: '2026-08-09 12:00', // stuck on yesterday
+    content: [{
+      partregion_id: 121,
+      Pollen: {
+        // today = yesterday's now-elapsed forecast, tomorrow = real today,
+        // dayafter_to = real tomorrow. Distinct levels so a wrong field
+        // mapping fails loudly instead of coincidentally matching.
+        Birke: { today: '3', tomorrow: '1', dayafter_to: '2-3' },
+      },
+    }],
+  };
+  const referenceDate = new Date(2026, 7, 10, 7, 50); // real "today" is 2026-08-10
+  const result = extractDWDDays(raw, 121, referenceDate);
+
+  assert.equal(result.days[0].date, '2026-08-10'); // real today, not last_update's date
+  assert.equal(result.days[1].date, '2026-08-11');
+  assert.equal(result.days[2].date, '2026-08-12');
+
+  // Real "today" (2026-08-10) must use DWD's 'tomorrow' field (index 1),
+  // not 'today' (which describes the now-elapsed 2026-08-09) -> 'low', not 'high'.
+  assert.equal(result.days[0].dwd.birch.level, 'low');
+  // Real "tomorrow" (2026-08-11) must use DWD's 'dayafter_to' field (index 2) -> 'high'.
+  assert.equal(result.days[1].dwd.birch.level, 'high');
+  // Real day-after (2026-08-12) is beyond DWD's 3-day window from its stale
+  // publish date -> no DWD data for it (falls back to other sources upstream).
+  assert.equal(result.days[2].dwd, null);
 });
 
 test('processOM: takes the daily max per pollen and buckets into levels', () => {
