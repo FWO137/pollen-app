@@ -538,6 +538,10 @@
   let dwdCache = null;
   let lglCache = null;
 
+  // Tracks when data was last successfully loaded, for the staleness
+  // check on return-to-tab further down (see "Staleness refresh").
+  let lastLoadedAt = null;
+
   // ─── fetch with timeout ──────────────────────────────────────────────────────
   // Plain fetch() has no timeout; a stalled request would otherwise leave the
   // loading spinner stuck forever instead of surfacing a retryable error.
@@ -694,6 +698,7 @@
       state.data = buildDays(dwdDays, omDays, lglToday);
       render();
       saveCache(document.getElementById('locationName').textContent);
+      lastLoadedAt = Date.now();
     } catch (err) {
       if (seq !== loadSeq) return; // superseded — don't clobber a newer render with a stale error
       if (silent) {
@@ -1018,6 +1023,22 @@
     state.data = null;
     state.dataTimestamp = null;
     requestGeo();
+  });
+
+  // ─── Staleness refresh on return-to-tab ─────────────────────────────────────
+  // DWD refreshes once a day, LGL/Open-Meteo hourly — with no other trigger,
+  // a tab left open all day (or backgrounded and returned to) would keep
+  // showing the same data indefinitely. Re-fetch silently once it's old
+  // enough, using whatever location is already active (no new GPS fix —
+  // a manually-picked city shouldn't get silently swapped for one).
+  const STALE_MS = 30 * 60 * 1000; // 30 minutes
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (lastLoadedAt == null || Date.now() - lastLoadedAt < STALE_MS) return;
+    dwdCache = null;
+    lglCache = null;
+    loadData({ silent: true });
   });
 
   // ─── Theme toggle ────────────────────────────────────────────────────────────
