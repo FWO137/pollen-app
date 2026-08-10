@@ -12,6 +12,16 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
   <title>Pollenflug</title>
+  <meta name="description" content="Pollenflug-Vorhersage für Bayern, Baden-Württemberg und Österreich – Standort, Belastung und die nächsten 3 Tage auf einen Blick.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Pollenflug">
+  <meta property="og:description" content="Pollenflug-Vorhersage für Bayern, Baden-Württemberg und Österreich – Standort, Belastung und die nächsten 3 Tage auf einen Blick.">
+  <meta property="og:image" content="https://pollen-check.netlify.app/icons/og-image.png">
+  <meta property="og:url" content="https://pollen-check.netlify.app/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pollenflug">
+  <meta name="twitter:description" content="Pollenflug-Vorhersage für Bayern, Baden-Württemberg und Österreich.">
+  <meta name="twitter:image" content="https://pollen-check.netlify.app/icons/og-image.png">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -63,6 +73,16 @@
     .sr-only {
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+
+    /* No focus styling existed anywhere before this — unusable via an
+       external keyboard or Switch Control, which don't use mouse/touch
+       and rely entirely on a visible focus indicator. :focus-visible
+       (not :focus) keeps mouse/touch clicks free of an outline. */
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 6px;
     }
 
     body {
@@ -482,6 +502,21 @@
 
   <script src="pollen-logic.js"></script>
   <script>
+  // pollen-logic.js is a plain (non-module) script load, so a failure there
+  // (flaky network, ad/script blocker, CDN blip) would otherwise leave the
+  // very next line's destructuring throw silently — the whole app hangs
+  // forever on "Standort wird ermittelt …" with no error shown at all.
+  // Guard it explicitly instead of relying on that failing loudly.
+  if (!window.PollenLogic) {
+    document.getElementById('srStatus') && (document.getElementById('srStatus').textContent = 'App konnte nicht geladen werden.');
+    document.getElementById('content').innerHTML = `
+      <div class="state-view">
+        <p style="font-size:24px">⚠️</p>
+        <p>App konnte nicht geladen werden.</p>
+        <p class="err-detail">Ein notwendiges Skript (pollen-logic.js) ist nicht verfügbar. Bitte Internetverbindung prüfen und neu laden.</p>
+        <button class="retry-btn" onclick="location.reload()">Neu laden</button>
+      </div>`;
+  } else {
   // Pure lookup tables & data-processing functions live in pollen-logic.js
   // (loaded above, also covered by tests/pollen-logic.test.mjs).
   const {
@@ -593,10 +628,18 @@
   }
 
   // ─── Load ────────────────────────────────────────────────────────────────────
+  // Sequencing token: if a manual refresh is triggered while a background
+  // refresh (or another manual one) is still in flight, both run
+  // concurrently — without this, whichever network response happens to
+  // land last would win and overwrite the other's result, regardless of
+  // which request was actually the most recent/intended one.
+  let loadSeq = 0;
+
   // `silent`: true for background refreshes that already have a rendered
   // view on screen — skips the full-screen spinner/error takeover so the
   // stale-but-good view stays up instead of flashing to a loading state.
   async function loadData({ silent = false } = {}) {
+    const seq = ++loadSeq;
     if (!silent) showLoading();
     const snapped = LOCATIONS[state.locationKey];
     const tooFar = state.snapDistanceKm != null && state.snapDistanceKm > SNAP_MAX_KM;
@@ -611,7 +654,7 @@
       : snapped;
 
     try {
-      let dwdDays = null, omDays = null, lglToday = null;
+      let dwdDays = null, omDays = null, lglToday = null, dataTimestamp = null;
       const lglStation = loc.lgl ?? null;
 
       if (loc.country === 'DE' && loc.dwd != null) {
@@ -629,17 +672,21 @@
         const lglDataDate  = lglVal?.dataDate ?? null;
         if (dwdDays === null && omDays === null && lglToday === null)
           throw new Error('Alle Datenquellen nicht verfügbar');
-        state.dataTimestamp = lglDataDate ?? dwdLastUpdate ?? null;
+        dataTimestamp = lglDataDate ?? dwdLastUpdate ?? null;
       } else {
         const omRaw = await fetchOM(loc.lat, loc.lon);
         omDays = processOM(omRaw);
-        state.dataTimestamp = null;
+        dataTimestamp = null;
       }
 
+      if (seq !== loadSeq) return; // superseded by a newer load — discard this result
+
+      state.dataTimestamp = dataTimestamp;
       state.data = buildDays(dwdDays, omDays, lglToday);
       render();
       saveCache(document.getElementById('locationName').textContent);
     } catch (err) {
+      if (seq !== loadSeq) return; // superseded — don't clobber a newer render with a stale error
       if (silent) {
         console.warn('Background refresh failed, keeping cached view', err);
       } else {
@@ -984,6 +1031,14 @@
   });
 
   // ─── Init ────────────────────────────────────────────────────────────────────
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        // Non-critical: app shell caching / Android install-prompt only, no user-facing impact.
+      });
+    });
+  }
+
   setupDateLabels();
   initTheme();
 
@@ -1000,6 +1055,7 @@
   } else {
     requestGeo();
   }
+  } // end: window.PollenLogic guard
   </script>
 </body>
 </html>

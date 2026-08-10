@@ -19,3 +19,24 @@
     # APIs the app talks to (DWD/LGL via same-origin redirects, Open-Meteo
     # directly) instead of allowing arbitrary hosts.
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://air-quality-api.open-meteo.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+# index.html, pollen-logic.js and sw.js are versioned together as one
+# unit but shipped as separate static files with no build-time hashing.
+# Force revalidation on every load (cheap 304s via ETag) so a deploy can
+# never leave a stale pollen-logic.js paired with a newer index.html.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"
+[[headers]]
+  for = "/pollen-logic.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
