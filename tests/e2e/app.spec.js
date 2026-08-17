@@ -329,7 +329,110 @@ test.describe('7-day trend view', () => {
 
     await page.goto('/');
     await expect(page.locator('.pollen-list')).toBeVisible();
-    await page.waitForTimeout(300);
     await expect(page.locator('.trend-wrap')).toHaveCount(0);
+  });
+});
+
+test.describe('per-pollen trend selection', () => {
+  test('tapping a pollen row shows that pollen\'s own history instead of the overall level, and "Alle" resets it', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    // Today: grass is medium. History: grass swings none -> low -> high across
+    // 3 days while the *overall* level (driven by a different dominant pollen
+    // each day) stays constant at 'medium' — if the trend dots didn't switch
+    // to grass-specific levels after the tap, this would still show 3
+    // identical medium dots instead of none/low/high.
+    const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [45], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    const history = {
+      history: [
+        { date: '2026-08-15', overall: 'medium', pollens: { grass: { level: 'none', display: '0', unit: 'K/m³', pct: 0 } } },
+        { date: '2026-08-16', overall: 'medium', pollens: { grass: { level: 'low', display: '5', unit: 'K/m³', pct: 20 } } },
+        { date: '2026-08-17', overall: 'medium', pollens: { grass: { level: 'high', display: '80', unit: 'K/m³', pct: 90 } } },
+      ],
+    };
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(history) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('.trend-label')).toHaveText('Verlauf');
+
+    const grassRow = page.locator('.p-row[data-pollen="grass"]');
+    await expect(grassRow).toHaveAttribute('aria-pressed', 'false');
+    await grassRow.click();
+
+    await expect(grassRow).toHaveAttribute('aria-pressed', 'true');
+    await expect(grassRow).toHaveClass(/selected/);
+    await expect(page.locator('.trend-label')).toHaveText('Verlauf: Gräser');
+    const dots = page.locator('.trend-dot');
+    await expect(dots).toHaveCount(3);
+    await expect(dots.nth(0)).toHaveClass(/l-none/);
+    await expect(dots.nth(1)).toHaveClass(/l-low/);
+    await expect(dots.nth(2)).toHaveClass(/l-high/);
+
+    // "Alle" goes back to the overall trend.
+    await page.locator('.trend-clear').click();
+    await expect(page.locator('.trend-label')).toHaveText('Verlauf');
+    await expect(grassRow).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('.trend-dot').nth(0)).toHaveClass(/l-medium/);
+
+    // Clicking the same row again toggles it off directly (no "Alle" needed).
+    await grassRow.click();
+    await expect(grassRow).toHaveAttribute('aria-pressed', 'true');
+    await grassRow.click();
+    await expect(grassRow).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('.trend-label')).toHaveText('Verlauf');
+  });
+});
+
+test.describe('share button', () => {
+  const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [45], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+
+  test('uses the Web Share API when available, with the current level and location in the text', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await page.addInitScript(() => {
+      window.__shareCalls = [];
+      navigator.share = (data) => { window.__shareCalls.push(data); return Promise.resolve(); };
+    });
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await page.locator('#shareBtn').click();
+
+    const calls = await page.evaluate(() => window.__shareCalls);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].text).toMatch(/München/);
+    expect(calls[0].text).toMatch(/Gräser/); // dominant pollen at grass=45 K/m³
+    expect(calls[0].url).toBe('https://pollen-check.netlify.app/');
+  });
+
+  test('falls back to the clipboard when the Web Share API is unavailable', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'share', { value: undefined, configurable: true });
+      window.__clipboardText = null;
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: (t) => { window.__clipboardText = t; return Promise.resolve(); } },
+        configurable: true,
+      });
+    });
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await page.locator('#shareBtn').click();
+
+    await expect(page.locator('#shareBtn')).toHaveText('Kopiert!');
+    const text = await page.evaluate(() => window.__clipboardText);
+    expect(text).toMatch(/München/);
+    expect(text).toMatch(/https:\/\/pollen-check\.netlify\.app\//);
   });
 });
