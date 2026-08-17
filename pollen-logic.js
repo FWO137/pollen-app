@@ -97,6 +97,30 @@
       LEVELS.indexOf(l) > LEVELS.indexOf(best) ? l : best, 'none');
   }
 
+  // Single source of truth for "what's the overall level for this day" —
+  // was duplicated (slightly differently) between render() and
+  // check-pollen.mjs; both now call this instead.
+  function overallLevel(pollens) {
+    return highestLevel(POLLEN.map((p) => pollens?.[p.key]?.level ?? 'none'));
+  }
+
+  const MONTH_ABBR_DE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+  // POLLEN[].season ("Jan – Mär" etc.) has existed since the very first
+  // version of this app but was never read anywhere. All of this app's
+  // ranges run forward within a calendar year (no Nov–Feb wraparound), so
+  // a plain month-index comparison is enough.
+  function isInSeason(pollenKey, dateStr) {
+    const p = POLLEN.find((x) => x.key === pollenKey);
+    if (!p?.season) return true; // no season data -> don't claim anything
+    const [fromAbbr, toAbbr] = p.season.split('–').map((s) => s.trim());
+    const from = MONTH_ABBR_DE.indexOf(fromAbbr);
+    const to = MONTH_ABBR_DE.indexOf(toAbbr);
+    if (from === -1 || to === -1) return true;
+    const month = new Date(dateStr + 'T12:00:00').getMonth();
+    return month >= from && month <= to;
+  }
+
   function fmtDate(dateStr) {
     if (!dateStr) return '';
     return new Date(dateStr + 'T12:00:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
@@ -342,7 +366,7 @@
 
   return {
     LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM,
-    highestLevel, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
+    highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
     parseDwdVal, extractDWDDays, processOM, processLGL, buildDays,
     pollenDisplay, diffTodayPollens, formatChangeNotification,
   };

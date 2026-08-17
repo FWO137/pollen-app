@@ -132,8 +132,10 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 12px;
       margin-bottom: 52px;
     }
+    .header .location-btn { flex-shrink: 0; }
 
     .location-btn {
       display: inline-flex;
@@ -171,13 +173,26 @@
     /* ── Day tabs ── */
     .day-tabs {
       display: flex;
-      gap: 20px;
+      gap: 14px;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
     }
+    .day-tabs::-webkit-scrollbar { display: none; }
+    /* No flex-grow/justify-content:flex-end here on purpose: with more tabs
+       than fit (up to 7), flex-end packs overflow toward the *start*, which
+       a plain LTR container can't scroll to (scrollLeft can't go negative)
+       — "Heute" would be permanently unreachable. Left-aligned + shrinkable
+       lets .header's own justify-content:space-between push this flush to
+       the right when everything fits, while overflow-x:auto scrolls
+       naturally left-to-right once it doesn't. */
 
     .day-tab {
       position: relative;
       display: flex;
       flex-direction: column;
+      flex-shrink: 0;
       align-items: flex-end;
       gap: 1px;
       font-family: inherit;
@@ -357,6 +372,23 @@
       line-height: 1.7;
     }
 
+    /* ── Trend (last 7 days) ── */
+    .trend-wrap { margin-top: 28px; }
+    .trend-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.10em; color: var(--t3); margin-bottom: 12px;
+    }
+    .trend-row { display: flex; gap: 10px; }
+    .trend-day { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .trend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .trend-dot.l-none      { background: var(--c-none); opacity: 0.5; }
+    .trend-dot.l-low       { background: var(--c-low); }
+    .trend-dot.l-medium    { background: var(--c-med); }
+    .trend-dot.l-high      { background: var(--c-high); }
+    .trend-dot.l-very-high { background: var(--c-vhi); }
+    .trend-date { font-size: 9px; color: var(--t3); }
+    .trend-date.today { color: var(--t1); font-weight: 600; }
+
     /* ── State views ── */
     .state-view {
       display: flex;
@@ -471,20 +503,7 @@
         <span class="loc-pulse"></span>
         <span id="locationName">Standort ermitteln …</span>
       </button>
-      <nav class="day-tabs" id="dayTabs" aria-label="Tagauswahl" role="tablist">
-        <button class="day-tab active" data-day="0" role="tab" aria-selected="true">
-          Heute
-          <span class="tab-date" id="tabDate0"></span>
-        </button>
-        <button class="day-tab" data-day="1" role="tab" aria-selected="false">
-          Morgen
-          <span class="tab-date" id="tabDate1"></span>
-        </button>
-        <button class="day-tab" data-day="2" role="tab" aria-selected="false">
-          Üb.
-          <span class="tab-date" id="tabDate2"></span>
-        </button>
-      </nav>
+      <nav class="day-tabs" id="dayTabs" aria-label="Tagauswahl" role="tablist"></nav>
     </header>
 
     <!-- Hero (populated by render()) -->
@@ -492,6 +511,11 @@
 
     <!-- Pollen list (populated by render()) -->
     <div id="content"></div>
+
+    <!-- 7-day trend (populated by loadTrend()); independent of the day-tabs
+         above/render() — only exists for locations with an active push
+         subscription, since that's the only thing collecting history. -->
+    <div id="trendSection"></div>
 
     <footer class="footer">
       <a href="https://www.dwd.de" target="_blank" rel="noopener">DWD</a> ·
@@ -525,7 +549,7 @@
   // (loaded above, also covered by tests/pollen-logic.test.mjs).
   const {
     LOCATIONS, POLLEN, LEVELS, SUMMARY_DE, SNAP_MAX_KM,
-    highestLevel, fmtDate, fmtDataTimestamp, nearestLocation,
+    overallLevel, isInSeason, fmtDate, fmtDataTimestamp, nearestLocation,
     extractDWDDays, processOM, processLGL, buildDays, pollenDisplay,
   } = window.PollenLogic;
 
@@ -579,10 +603,14 @@
   }
 
   // ─── Open-Meteo API ───────────────────────────────────────────────────────────
+  // DWD only ever covers 3 days (today/tomorrow/dayafter_to) and LGL only
+  // "today", but Open-Meteo can forecast further out — request a full week
+  // so days 4-7 still show something (Open-Meteo-only, same graceful
+  // fallback buildDays()/pollenDisplay() already do for a stale DWD day).
   async function fetchOM(lat, lon) {
     const vars = POLLEN.filter(p => p.om).map(p => p.om).join(',');
     const url = `https://air-quality-api.open-meteo.com/v1/air-quality`
-      + `?latitude=${lat}&longitude=${lon}&hourly=${vars}&timezone=auto&forecast_days=3`;
+      + `?latitude=${lat}&longitude=${lon}&hourly=${vars}&timezone=auto&forecast_days=7`;
     const r = await fetchWithTimeout(url);
     if (!r.ok) throw new Error('Open-Meteo ' + r.status);
     return r.json();
@@ -707,9 +735,11 @@
 
       state.dataTimestamp = dataTimestamp;
       state.data = buildDays(dwdDays, omDays, lglToday);
+      renderDayTabs();
       render();
       saveCache(document.getElementById('locationName').textContent);
       lastLoadedAt = Date.now();
+      loadTrend();
     } catch (err) {
       if (seq !== loadSeq) return; // superseded — don't clobber a newer render with a stale error
       if (silent) {
@@ -892,17 +922,8 @@
     const dayData = state.data[state.selectedDay];
     if (!dayData) return showError('Prognosedaten nicht verfügbar');
 
-    // Update tab dates
-    state.data.forEach((day, i) => {
-      const el = document.getElementById(`tabDate${i}`);
-      if (el && day?.date) el.textContent = fmtDate(day.date);
-    });
-
     // Overall level & dominant pollen
-    const levelsWithData = POLLEN
-      .filter(p => dayData.pollens[p.key] !== null)
-      .map(p => dayData.pollens[p.key]?.level ?? 'none');
-    const overall = highestLevel(levelsWithData);
+    const overall = overallLevel(dayData.pollens);
 
     let dominant = null, domIdx = -1;
     for (const p of POLLEN) {
@@ -955,6 +976,12 @@
 
     const active   = sortedPollen.filter(p => dayData.pollens[p.key]?.level !== 'none' && dayData.pollens[p.key] !== null);
     const noFlight = sortedPollen.filter(p => !dayData.pollens[p.key] || dayData.pollens[p.key].level === 'none');
+    // POLLEN[].season has existed since the first version of this app but
+    // was never read — split "kein Flug" into "in season but currently
+    // zero" vs. "outside its season entirely" instead of lumping both
+    // together, since they mean different things.
+    const noFlightInSeason    = noFlight.filter(p => isInSeason(p.key, dayData.date));
+    const noFlightOutOfSeason = noFlight.filter(p => !isInSeason(p.key, dayData.date));
 
     const wrap = document.createElement('div');
 
@@ -980,12 +1007,21 @@
       list.appendChild(row);
     }
 
-    if (noFlight.length > 0) {
+    if (noFlightInSeason.length > 0) {
       const nf = document.createElement('div');
       nf.className = 'no-pollen';
       nf.innerHTML = `
         <span class="np-label">Kein Flug</span>
-        <span class="np-list">${noFlight.map(p => p.name).join(' · ')}</span>`;
+        <span class="np-list">${noFlightInSeason.map(p => p.name).join(' · ')}</span>`;
+      list.appendChild(nf);
+    }
+
+    if (noFlightOutOfSeason.length > 0) {
+      const nf = document.createElement('div');
+      nf.className = 'no-pollen';
+      nf.innerHTML = `
+        <span class="np-label">Außerhalb der Saison</span>
+        <span class="np-list">${noFlightOutOfSeason.map(p => p.name).join(' · ')}</span>`;
       list.appendChild(nf);
     }
 
@@ -1003,14 +1039,82 @@
   }
 
   // ─── Tabs & date labels ───────────────────────────────────────────────────────
-  function setupDateLabels() {
-    const today = new Date();
-    for (let i = 0; i < 3; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      const el = document.getElementById(`tabDate${i}`);
-      if (el) el.textContent = d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  // Rebuilds the whole day-tabs strip from state.data (up to 7 days now that
+  // Open-Meteo is asked for a week — DWD/LGL still only ever cover the
+  // first 1-3, the rest fall back to Open-Meteo-only via buildDays()).
+  // Called whenever state.data changes; NOT from render(), which runs on
+  // every tab click too and would otherwise rebuild all 7 buttons just to
+  // toggle which one is active (syncTabs() already handles that in place).
+  function renderDayTabs() {
+    const nav = document.getElementById('dayTabs');
+    if (!nav) return;
+    const days = state.data ?? [];
+    const count = Math.max(days.length, 3); // at least 3 while loading / on first paint
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < count; i++) {
+      const dateStr = days[i]?.date;
+      const d = dateStr ? new Date(dateStr + 'T12:00:00') : (() => {
+        const fallback = new Date();
+        fallback.setDate(fallback.getDate() + i);
+        return fallback;
+      })();
+      const label = i === 0 ? 'Heute'
+        : i === 1 ? 'Morgen'
+        : i === 2 ? 'Üb.'
+        : d.toLocaleDateString('de-DE', { weekday: 'short' }).replace(/\.$/, '');
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'day-tab' + (i === state.selectedDay ? ' active' : '');
+      btn.dataset.day = String(i);
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', String(i === state.selectedDay));
+      btn.innerHTML = `${label}<span class="tab-date">${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}</span>`;
+      frag.appendChild(btn);
     }
+    nav.replaceChildren(frag);
+  }
+
+  // History only exists for locations with an active push subscription
+  // (netlify/functions/check-pollen.mjs is the only thing that ever writes
+  // it), so an empty/failed result here just quietly hides the section —
+  // it's not an error state worth bothering the user with.
+  async function loadTrend() {
+    const section = document.getElementById('trendSection');
+    if (!section) return;
+    const loc = currentLoc();
+    if (!loc) { section.replaceChildren(); return; }
+
+    let history;
+    try {
+      const r = await fetch(`/.netlify/functions/history?lat=${loc.lat}&lon=${loc.lon}`);
+      if (!r.ok) throw new Error('history ' + r.status);
+      ({ history } = await r.json());
+    } catch {
+      section.replaceChildren();
+      return;
+    }
+
+    if (!history || history.length < 2) { section.replaceChildren(); return; }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const wrap = document.createElement('div');
+    wrap.className = 'trend-wrap';
+    wrap.innerHTML = '<div class="trend-label">Verlauf</div>';
+    const row = document.createElement('div');
+    row.className = 'trend-row';
+    for (const day of history.slice(-7)) {
+      const d = document.createElement('div');
+      d.className = 'trend-day';
+      const weekday = new Date(day.date + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short' }).replace(/\.$/, '');
+      const isToday = day.date === todayStr;
+      d.innerHTML = `
+        <span class="trend-dot l-${day.overall}" title="${SUMMARY_DE[day.overall] ?? ''}"></span>
+        <span class="trend-date${isToday ? ' today' : ''}">${weekday}</span>`;
+      row.appendChild(d);
+    }
+    wrap.appendChild(row);
+    section.replaceChildren(wrap);
   }
 
   function syncTabs() {
@@ -1177,7 +1281,7 @@
     });
   }
 
-  setupDateLabels();
+  renderDayTabs();
   initTheme();
   initNotifyUI();
 
@@ -1189,7 +1293,9 @@
     state.dataTimestamp = cached.dataTimestamp ?? null;
     document.getElementById('locationName').textContent =
       cached.locationName || LOCATIONS[state.locationKey]?.name || 'Standort';
+    renderDayTabs();
     render();
+    loadTrend();
     requestGeo({ background: true });
   } else {
     requestGeo();

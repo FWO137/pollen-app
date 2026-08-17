@@ -4,7 +4,7 @@ import PollenLogic from '../pollen-logic.js';
 
 const {
   LOCATIONS, LEVELS, SNAP_MAX_KM,
-  highestLevel, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
+  highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
   parseDwdVal, extractDWDDays, processOM, processLGL, buildDays,
   pollenDisplay, diffTodayPollens, formatChangeNotification,
 } = PollenLogic;
@@ -279,4 +279,29 @@ test('formatChangeNotification: includes the location, overall level, and the ne
   assert.match(body, /Geringe Belastung/);
   assert.match(body, /Gräser: 9 K\/m³/);
   assert.match(body, /Beifuß: 1 K\/m³/);
+});
+
+test('overallLevel: takes the highest level across all pollens, defaulting missing ones to none', () => {
+  const pollens = { grass: { level: 'medium' }, birch: { level: 'high' }, hazel: null };
+  assert.equal(overallLevel(pollens), 'high');
+  assert.equal(overallLevel({}), 'none');
+  assert.equal(overallLevel(null), 'none');
+});
+
+test('isInSeason: pollens outside their season window are correctly flagged', () => {
+  // Birke: Apr – Mai
+  assert.equal(isInSeason('birch', '2026-04-15'), true);
+  assert.equal(isInSeason('birch', '2026-05-31'), true);
+  assert.equal(isInSeason('birch', '2026-01-15'), false);
+  assert.equal(isInSeason('birch', '2026-08-17'), false);
+});
+
+test('isInSeason: Ambrosia (Aug – Okt) matches the reported real-world scenario', () => {
+  assert.equal(isInSeason('ragweed', '2026-08-17'), true);
+  assert.equal(isInSeason('ragweed', '2026-11-01'), false);
+  assert.equal(isInSeason('ragweed', '2026-07-31'), false);
+});
+
+test('isInSeason: unknown pollen key or missing season data defaults to true (never falsely claims "out of season")', () => {
+  assert.equal(isInSeason('does-not-exist', '2026-08-17'), true);
 });
