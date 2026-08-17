@@ -79,7 +79,7 @@
        external keyboard or Switch Control, which don't use mouse/touch
        and rely entirely on a visible focus indicator. :focus-visible
        (not :focus) keeps mouse/touch clicks free of an outline. */
-    a:focus-visible, button:focus-visible {
+    a:focus-visible, button:focus-visible, [role="button"]:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 3px;
       border-radius: 6px;
@@ -288,7 +288,11 @@
       padding: 11px 0;
       border-bottom: 1px solid var(--bdr);
       animation: fadeIn 0.3s ease both;
+      cursor: pointer;
+      touch-action: manipulation;
+      border-radius: 8px;
     }
+    .p-row.selected { background: var(--bdr); }
 
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -372,11 +376,30 @@
       line-height: 1.7;
     }
 
+    .share-btn {
+      display: block;
+      margin-top: 6px;
+      font-family: inherit; font-size: 11px; color: var(--t2);
+      background: none; border: none; padding: 0; cursor: pointer;
+      text-decoration: underline; text-decoration-color: var(--bdr);
+      touch-action: manipulation;
+    }
+
     /* ── Trend (last 7 days) ── */
     .trend-wrap { margin-top: 28px; }
+    .trend-label-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px;
+    }
     .trend-label {
       font-size: 10px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.10em; color: var(--t3); margin-bottom: 12px;
+      letter-spacing: 0.10em; color: var(--t3);
+    }
+    .trend-clear {
+      font-family: inherit; font-size: 10px; color: var(--t2);
+      background: none; border: none; padding: 0; cursor: pointer;
+      text-decoration: underline; text-decoration-color: var(--bdr);
+      touch-action: manipulation;
     }
     .trend-row { display: flex; gap: 10px; }
     .trend-day { display: flex; flex-direction: column; align-items: center; gap: 6px; }
@@ -386,6 +409,9 @@
     .trend-dot.l-medium    { background: var(--c-med); }
     .trend-dot.l-high      { background: var(--c-high); }
     .trend-dot.l-very-high { background: var(--c-vhi); }
+    /* Distinct from l-none (a confirmed zero reading): this pollen simply
+       wasn't tracked/reported at all on that day. */
+    .trend-dot.unknown     { background: transparent; border: 1px dashed var(--t3); }
     .trend-date { font-size: 9px; color: var(--t3); }
     .trend-date.today { color: var(--t1); font-weight: 600; }
 
@@ -561,6 +587,8 @@
     customCoords:   null,
     dataTimestamp:  null,
     snapDistanceKm: null,
+    history:        null, // last fetched by loadTrend(); null until it succeeds
+    selectedPollen: null, // pollen key whose own history the trend section shows, or null for the overall trend
   };
 
   let dwdCache = null;
@@ -995,8 +1023,9 @@
 
     for (const p of active) {
       const entry = dayData.pollens[p.key];
+      const isSelected = p.key === state.selectedPollen;
       const row = document.createElement('div');
-      row.className = `p-row l-${entry.level}`;
+      row.className = `p-row l-${entry.level}` + (isSelected ? ' selected' : '');
       const disp = pollenDisplay(entry); // prefers K/m³ (Open-Meteo) over DWD's 0-3 scale — see pollen-logic.js
       row.style.setProperty('--pct', `${disp.pct ?? 0}%`);
       const valueHtml = `${disp.value}<span class="u">${disp.unit}</span>`;
@@ -1004,6 +1033,13 @@
         <div class="p-name"><span class="p-icon" aria-hidden="true">${p.icon}</span>${p.name}</div>
         <div class="p-track"><div class="p-fill"></div></div>
         <div class="p-val">${valueHtml}</div>`;
+      // Tappable: shows this pollen's own history in the trend section
+      // below instead of the overall level, if history is available.
+      row.dataset.pollen = p.key;
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      row.setAttribute('aria-pressed', String(isSelected));
+      row.setAttribute('aria-label', `${p.name}-Verlauf ${isSelected ? 'ausblenden' : 'anzeigen'}`);
       list.appendChild(row);
     }
 
@@ -1032,10 +1068,51 @@
     sl.textContent = sourceText + (standText ? ' · Stand: ' + standText : '');
     wrap.appendChild(sl);
 
+    const shareBtn = document.createElement('button');
+    shareBtn.type = 'button';
+    shareBtn.className = 'share-btn';
+    shareBtn.id = 'shareBtn';
+    shareBtn.textContent = 'Teilen';
+    shareBtn.addEventListener('click', () => shareToday(dayData, overall, dominant, domIdx));
+    wrap.appendChild(shareBtn);
+
     document.getElementById('content').replaceChildren(wrap);
 
     const dominantText = dominant && domIdx > 0 ? `, Hauptbelastung ${dominant.name}` : '';
     announce(`${SUMMARY_DE[overall]} für ${LOCATIONS[state.locationKey]?.name ?? 'deinen Standort'}${dominantText}`);
+  }
+
+  // Uses the Web Share API where available (incl. iOS Safari/PWA — this is
+  // a direct click handler, so it counts as a user gesture); falls back to
+  // copying the text to the clipboard on desktop browsers without it.
+  async function shareToday(dayData, overall, dominant, domIdx) {
+    const locName = document.getElementById('locationName').textContent || 'meinem Standort';
+    const dominantText = dominant && domIdx > 0 ? ` Hauptbelastung: ${dominant.name}.` : '';
+    const text = `Pollenflug ${fmtDate(dayData.date)} in ${locName}: ${SUMMARY_DE[overall]}.${dominantText}`;
+    const url = 'https://pollen-check.netlify.app/';
+    const btn = document.getElementById('shareBtn');
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Pollenflug', text, url });
+      } catch {
+        // User cancelled the share sheet, or the platform rejected this
+        // combination of fields — neither is worth surfacing as an error.
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      announce('In die Zwischenablage kopiert');
+      if (btn) {
+        const original = btn.textContent;
+        btn.textContent = 'Kopiert!';
+        setTimeout(() => { if (btn.isConnected) btn.textContent = original; }, 1500);
+      }
+    } catch {
+      announce('Teilen ist auf diesem Gerät nicht möglich');
+    }
   }
 
   // ─── Tabs & date labels ───────────────────────────────────────────────────────
@@ -1083,7 +1160,7 @@
     const section = document.getElementById('trendSection');
     if (!section) return;
     const loc = currentLoc();
-    if (!loc) { section.replaceChildren(); return; }
+    if (!loc) { state.history = null; section.replaceChildren(); return; }
 
     let history;
     try {
@@ -1091,25 +1168,68 @@
       if (!r.ok) throw new Error('history ' + r.status);
       ({ history } = await r.json());
     } catch {
+      state.history = null;
       section.replaceChildren();
       return;
     }
 
-    if (!history || history.length < 2) { section.replaceChildren(); return; }
+    state.history = (history && history.length >= 2) ? history : null;
+    if (!state.history) state.selectedPollen = null; // nothing left to show per-pollen either
+    renderTrendView();
+  }
 
+  // Redraws #trendSection from state.history — either the overall level per
+  // day (default), or one pollen's own level per day after tapping that
+  // pollen's row in the list above. Doesn't re-fetch; called from both
+  // loadTrend() (after a fresh fetch) and the pollen-row tap handler.
+  function renderTrendView() {
+    const section = document.getElementById('trendSection');
+    if (!section) return;
+    if (!state.history) { section.replaceChildren(); return; }
+
+    const pollenDef = state.selectedPollen ? POLLEN.find(p => p.key === state.selectedPollen) : null;
     const todayStr = new Date().toISOString().split('T')[0];
+
     const wrap = document.createElement('div');
     wrap.className = 'trend-wrap';
-    wrap.innerHTML = '<div class="trend-label">Verlauf</div>';
+
+    const labelRow = document.createElement('div');
+    labelRow.className = 'trend-label-row';
+    const label = document.createElement('div');
+    label.className = 'trend-label';
+    label.textContent = pollenDef ? `Verlauf: ${pollenDef.name}` : 'Verlauf';
+    labelRow.appendChild(label);
+    if (pollenDef) {
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'trend-clear';
+      clear.textContent = 'Alle';
+      clear.setAttribute('aria-label', 'Gesamtverlauf anzeigen');
+      clear.addEventListener('click', () => {
+        state.selectedPollen = null;
+        render();
+        renderTrendView();
+      });
+      labelRow.appendChild(clear);
+    }
+    wrap.appendChild(labelRow);
+
     const row = document.createElement('div');
     row.className = 'trend-row';
-    for (const day of history.slice(-7)) {
+    for (const day of state.history.slice(-7)) {
       const d = document.createElement('div');
       d.className = 'trend-day';
       const weekday = new Date(day.date + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short' }).replace(/\.$/, '');
       const isToday = day.date === todayStr;
+      const entry = pollenDef ? (day.pollens?.[pollenDef.key] ?? null) : null;
+      const level = pollenDef ? entry?.level : day.overall;
+      const dotClass = level ? `l-${level}` : 'unknown';
+      const disp = pollenDef && entry ? pollenDisplay(entry) : null;
+      const title = pollenDef
+        ? (disp ? `${disp.value} ${disp.unit}` : 'Keine Daten')
+        : (SUMMARY_DE[day.overall] ?? '');
       d.innerHTML = `
-        <span class="trend-dot l-${day.overall}" title="${SUMMARY_DE[day.overall] ?? ''}"></span>
+        <span class="trend-dot ${dotClass}" title="${title}"></span>
         <span class="trend-date${isToday ? ' today' : ''}">${weekday}</span>`;
       row.appendChild(d);
     }
@@ -1140,6 +1260,28 @@
     state.data = null;
     state.dataTimestamp = null;
     requestGeo();
+  });
+
+  // Tapping a pollen row shows its own history in the trend section
+  // (renderTrendView() falls back to "no history yet" if state.history is
+  // still null). Delegated on #content, which persists across render()'s
+  // replaceChildren() calls, so this only needs wiring up once.
+  function togglePollenSelection(key) {
+    state.selectedPollen = state.selectedPollen === key ? null : key;
+    render();
+    renderTrendView();
+  }
+  document.getElementById('content').addEventListener('click', e => {
+    const row = e.target.closest('.p-row');
+    if (!row) return;
+    togglePollenSelection(row.dataset.pollen);
+  });
+  document.getElementById('content').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('.p-row');
+    if (!row) return;
+    e.preventDefault();
+    togglePollenSelection(row.dataset.pollen);
   });
 
   // ─── Staleness refresh on return-to-tab ─────────────────────────────────────
