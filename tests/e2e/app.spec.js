@@ -436,3 +436,79 @@ test.describe('share button', () => {
     expect(text).toMatch(/https:\/\/pollen-check\.netlify\.app\//);
   });
 });
+
+test.describe('rain hint', () => {
+  // Fixed clock so "today" in the app matches the fixture's first day —
+  // the hint's wording ("heute" vs "an diesem Tag") depends on that match.
+  async function fixClock(page) {
+    await page.addInitScript(() => {
+      const RealDate = Date;
+      class FixedDate extends RealDate {
+        constructor(...args) { if (args.length === 0) return new RealDate(2026, 7, 17, 8, 0, 0); return new RealDate(...args); }
+        static now() { return new RealDate(2026, 7, 17, 8, 0, 0).getTime(); }
+      }
+      window.Date = FixedDate;
+    });
+  }
+
+  // grass=45 K/m³ (an active, non-'none' level) on both forecast days —
+  // isolates the test to the rain/no-rain difference between the two days
+  // rather than the "level is already none" suppression tested separately below.
+  const om2day = { hourly: { time: ['2026-08-17T00:00', '2026-08-18T00:00'], grass_pollen: [45, 45], alder_pollen: [0, 0], birch_pollen: [0, 0], mugwort_pollen: [0, 0], ragweed_pollen: [0, 0], olive_pollen: [0, 0] } };
+
+  test('shows the hint on a rainy day with active pollen, hides it on a dry day, and doesn\'t block the pollen render', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await fixClock(page);
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om2day) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+    const weather = { daily: { time: ['2026-08-17', '2026-08-18'], precipitation_sum: [5.2, 0] } };
+    await page.route('**/api.open-meteo.com/v1/forecast**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(weather) }));
+
+    await page.goto('/');
+    // The pollen list must render right away, without waiting on the
+    // (separately-fetched, non-critical) weather data.
+    await expect(page.locator('.pollen-list')).toBeVisible();
+
+    await expect(page.locator('.rain-hint')).toBeVisible();
+    await expect(page.locator('.rain-hint')).toContainText('Regen heute erwartet');
+
+    await page.locator('.day-tab').nth(1).click(); // "Morgen" — dry
+    await expect(page.locator('.rain-hint')).toHaveCount(0);
+  });
+
+  test('no hint when the forecasted rain is below the threshold', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await fixClock(page);
+    const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [45], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+    const weather = { daily: { time: ['2026-08-17'], precipitation_sum: [0.4] } }; // below RAIN_THRESHOLD_MM (1mm)
+    await page.route('**/api.open-meteo.com/v1/forecast**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(weather) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await page.waitForTimeout(400); // let the fire-and-forget weather fetch resolve
+    await expect(page.locator('.rain-hint')).toHaveCount(0);
+  });
+
+  test('no hint when the pollen level is already "none", even with plenty of rain forecasted', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await fixClock(page);
+    const omZero = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [0], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(omZero) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+    const weather = { daily: { time: ['2026-08-17'], precipitation_sum: [10] } };
+    await page.route('**/api.open-meteo.com/v1/forecast**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(weather) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await page.waitForTimeout(400);
+    await expect(page.locator('.rain-hint')).toHaveCount(0);
+  });
+});

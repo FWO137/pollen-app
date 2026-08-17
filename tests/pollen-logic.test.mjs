@@ -5,7 +5,7 @@ import PollenLogic from '../pollen-logic.js';
 const {
   LOCATIONS, LEVELS, SNAP_MAX_KM,
   highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
-  parseDwdVal, extractDWDDays, processOM, processLGL, buildDays,
+  parseDwdVal, extractDWDDays, processOM, processLGL, buildDays, processWeather,
   pollenDisplay, diffTodayPollens, formatChangeNotification,
 } = PollenLogic;
 
@@ -155,6 +155,18 @@ test('processOM: takes the daily max per pollen and buckets into levels', () => 
   assert.equal(days[0].om.birch.level, 'high');
   assert.equal(days[0].om.grass.level, 'low');
   assert.equal(days[1].om.birch.level, 'none');
+});
+
+test('processWeather: maps daily precipitation_sum onto its date', () => {
+  const raw = { daily: { time: ['2026-08-17', '2026-08-18'], precipitation_sum: [0, 3.4] } };
+  const byDate = processWeather(raw);
+  assert.deepEqual(byDate, { '2026-08-17': 0, '2026-08-18': 3.4 });
+});
+
+test('processWeather: missing/malformed input returns an empty map instead of throwing', () => {
+  assert.deepEqual(processWeather({}), {});
+  assert.deepEqual(processWeather(null), {});
+  assert.deepEqual(processWeather({ daily: { time: ['2026-08-17'] } }), { '2026-08-17': 0 }); // no precipitation_sum array -> defaults to 0
 });
 
 test('processLGL: picks the max reading per station and returns the latest "to" timestamp', () => {
