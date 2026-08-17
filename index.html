@@ -268,6 +268,19 @@
     .hero-meta strong { font-weight: 600; color: var(--t1); }
     .hero-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--t3); flex-shrink: 0; }
 
+    .rain-hint {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--bdr);
+      font-size: 12.5px;
+      color: var(--t2);
+    }
+    .rain-hint .ri { font-size: 14px; flex-shrink: 0; }
+
     /* ── Pollen list (built by JS into #content) ── */
     .list-head {
       font-size: 10px;
@@ -574,9 +587,9 @@
   // Pure lookup tables & data-processing functions live in pollen-logic.js
   // (loaded above, also covered by tests/pollen-logic.test.mjs).
   const {
-    LOCATIONS, POLLEN, LEVELS, SUMMARY_DE, SNAP_MAX_KM,
+    LOCATIONS, POLLEN, LEVELS, SUMMARY_DE, SNAP_MAX_KM, RAIN_THRESHOLD_MM,
     overallLevel, isInSeason, fmtDate, fmtDataTimestamp, nearestLocation,
-    extractDWDDays, processOM, processLGL, buildDays, pollenDisplay,
+    extractDWDDays, processOM, processLGL, buildDays, processWeather, pollenDisplay,
   } = window.PollenLogic;
 
   // ─── State ───────────────────────────────────────────────────────────────────
@@ -589,6 +602,7 @@
     snapDistanceKm: null,
     history:        null, // last fetched by loadTrend(); null until it succeeds
     selectedPollen: null, // pollen key whose own history the trend section shows, or null for the overall trend
+    rainByDate:     null, // { [date]: precipitation_sum in mm }, last fetched by loadData(); null until it succeeds
   };
 
   let dwdCache = null;
@@ -641,6 +655,18 @@
       + `?latitude=${lat}&longitude=${lon}&hourly=${vars}&timezone=auto&forecast_days=7`;
     const r = await fetchWithTimeout(url);
     if (!r.ok) throw new Error('Open-Meteo ' + r.status);
+    return r.json();
+  }
+
+  // Separate free Open-Meteo endpoint (regular weather forecast, not the
+  // air-quality one above) for the rain hint — non-critical, so a failure
+  // here (caught by the caller) should never block or error out the actual
+  // pollen data.
+  async function fetchWeather(lat, lon) {
+    const url = `https://api.open-meteo.com/v1/forecast`
+      + `?latitude=${lat}&longitude=${lon}&daily=precipitation_sum&timezone=auto&forecast_days=7`;
+    const r = await fetchWithTimeout(url);
+    if (!r.ok) throw new Error('Open-Meteo Weather ' + r.status);
     return r.json();
   }
 
@@ -736,6 +762,11 @@
     try {
       let dwdDays = null, omDays = null, lglToday = null, dataTimestamp = null;
       const lglStation = loc.lgl ?? null;
+      // Kicked off here but never awaited inline — a rain-hint fetch being
+      // slow or failing must never delay or break the actual pollen render.
+      // See the .then() further down, which patches the hint in once (if)
+      // this resolves, same fire-and-forget shape as loadTrend() below.
+      const weatherPromise = fetchWeather(loc.lat, loc.lon).then(processWeather).catch(() => null);
 
       if (loc.country === 'DE' && loc.dwd != null) {
         const [dwdResult, omResult, lglResult] = await Promise.allSettled([
@@ -768,6 +799,13 @@
       saveCache(document.getElementById('locationName').textContent);
       lastLoadedAt = Date.now();
       loadTrend();
+      // Doesn't block the render above — the rain hint just fades in a beat
+      // later once (if) the weather fetch resolves.
+      weatherPromise.then(rainByDate => {
+        if (seq !== loadSeq) return;
+        state.rainByDate = rainByDate;
+        render();
+      });
     } catch (err) {
       if (seq !== loadSeq) return; // superseded — don't clobber a newer render with a stale error
       if (silent) {
@@ -981,6 +1019,18 @@
       ? `Hauptbelastung: <strong>${dominant.name}</strong>`
       : 'Keine aktiven Pollen';
 
+    // Rain washes pollen out of the air — worth a hint on days with
+    // meaningful rainfall, but only while there's actually a load to wash
+    // out (skip it once the level is already "none"). Best-effort: the
+    // hint just doesn't render if the weather fetch failed or is still in
+    // flight, same as the trend section.
+    const rainMm = state.rainByDate?.[dayData.date];
+    const rainExpected = overall !== 'none' && rainMm != null && rainMm >= RAIN_THRESHOLD_MM;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const rainHtml = rainExpected
+      ? `<div class="rain-hint"><span class="ri" aria-hidden="true">🌧️</span>Regen ${dayData.date === todayStr ? 'heute' : 'an diesem Tag'} erwartet – die Belastung sinkt dann oft.</div>`
+      : '';
+
     const summaryEl = document.getElementById('summary');
     summaryEl.style.display = 'block';
     summaryEl.innerHTML = `
@@ -992,6 +1042,7 @@
           <span class="hero-sep"></span>
           <span>${dominantLabel}</span>
         </div>
+        ${rainHtml}
       </div>`;
 
     // ── Pollen list ──

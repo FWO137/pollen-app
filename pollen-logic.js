@@ -249,6 +249,21 @@
       });
   }
 
+  // ─── Open-Meteo weather (rain hint) ─────────────────────────────────────────
+  // Rain washes pollen out of the air, so a day with meaningful rainfall is
+  // worth a hint even though it's not reflected in the pollen readings
+  // themselves (those lag — a rainy morning shows in tomorrow's numbers,
+  // not today's). Daily precipitation_sum in mm; >= this is "rain expected".
+  const RAIN_THRESHOLD_MM = 1;
+
+  function processWeather(raw) {
+    const times = raw?.daily?.time ?? [];
+    const sums  = raw?.daily?.precipitation_sum ?? [];
+    const byDate = {};
+    for (let i = 0; i < times.length; i++) byDate[times[i]] = sums[i] ?? 0;
+    return byDate;
+  }
+
   // ─── LGL Bayern ePIN ─────────────────────────────────────────────────────────
   function processLGL(raw, stationId) {
     const result = {};
@@ -365,9 +380,9 @@
   }
 
   return {
-    LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM,
+    LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM, RAIN_THRESHOLD_MM,
     highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
-    parseDwdVal, extractDWDDays, processOM, processLGL, buildDays,
+    parseDwdVal, extractDWDDays, processOM, processLGL, buildDays, processWeather,
     pollenDisplay, diffTodayPollens, formatChangeNotification,
   };
 });
