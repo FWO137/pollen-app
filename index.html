@@ -959,11 +959,19 @@
       const entry = dayData.pollens[p.key];
       const row = document.createElement('div');
       row.className = `p-row l-${entry.level}`;
-      row.style.setProperty('--pct', `${entry.pct ?? 0}%`);
+      // Prefer the real K/m³ concentration (from Open-Meteo) over DWD's
+      // 0-3 severity code whenever one is available, so the unit shown
+      // doesn't flip between "X / 3" and "K/m³" depending on which source
+      // happened to answer for that day — see buildDays() in pollen-logic.js.
+      const hasOm = entry.omDisplay != null;
+      row.style.setProperty('--pct', `${(hasOm ? entry.omPct : entry.pct) ?? 0}%`);
+      const valueHtml = hasOm
+        ? `${entry.omDisplay}<span class="u">K/m³</span>`
+        : `${entry.display}<span class="u">${entry.unit}</span>`;
       row.innerHTML = `
         <div class="p-name"><span class="p-icon" aria-hidden="true">${p.icon}</span>${p.name}</div>
         <div class="p-track"><div class="p-fill"></div></div>
-        <div class="p-val">${entry.display}<span class="u">${entry.unit}</span></div>`;
+        <div class="p-val">${valueHtml}</div>`;
       list.appendChild(row);
     }
 

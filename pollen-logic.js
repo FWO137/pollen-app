@@ -268,7 +268,15 @@
           pollens[p.key] = lgl[p.key];
         } else if (dwd?.[p.key] != null) {
           const entry = { ...dwd[p.key] };
-          if (om?.[p.key]) entry.omDisplay = om[p.key].display;
+          // DWD only reports a 0-3 severity code, not a real concentration.
+          // When Open-Meteo also covers this pollen, carry its K/m³ figure
+          // (and matching bar-fill %) along so the UI can show one
+          // consistent unit instead of "X / 3" on some days and "K/m³" on
+          // others depending on which source happened to answer that day.
+          if (om?.[p.key]) {
+            entry.omDisplay = om[p.key].display;
+            entry.omPct = om[p.key].pct;
+          }
           pollens[p.key] = entry;
         } else if (om?.[p.key] != null) {
           pollens[p.key] = om[p.key];

@@ -189,11 +189,22 @@ test('buildDays: LGL takes priority over DWD, DWD over Open-Meteo', () => {
   assert.equal(days[0].pollens.hazel, null);               // no data anywhere
 });
 
-test('buildDays: DWD entries get an omDisplay hint when Open-Meteo also has data', () => {
+test('buildDays: DWD entries get an omDisplay/omPct hint when Open-Meteo also has data', () => {
   const dwdDays = [{ date: '2026-08-09', dwd: { birch: { level: 'low', source: 'dwd' } } }];
-  const omDays  = [{ date: '2026-08-09', om: { birch: { level: 'high', source: 'om', display: '77' } } }];
+  const omDays  = [{ date: '2026-08-09', om: { birch: { level: 'high', source: 'om', display: '77', pct: 92 } } }];
   const days = buildDays(dwdDays, omDays, null);
   assert.equal(days[0].pollens.birch.omDisplay, '77');
+  assert.equal(days[0].pollens.birch.omPct, 92);
+});
+
+test('buildDays: DWD entries with no Open-Meteo coverage for that pollen have no omDisplay', () => {
+  // hazel/ash/plane/rye aren't tracked by Open-Meteo at all (POLLEN[].om
+  // is null for them) — there's no K/m³ figure to fall back to, so these
+  // stay on DWD's native 0-3 scale.
+  const dwdDays = [{ date: '2026-08-09', dwd: { hazel: { level: 'low', display: '1', unit: '/ 3', source: 'dwd' } } }];
+  const days = buildDays(dwdDays, null, null);
+  assert.equal(days[0].pollens.hazel.omDisplay, undefined);
+  assert.equal(days[0].pollens.hazel.display, '1');
 });
 
 test('buildDays: always produces at least 3 days even with no data', () => {
