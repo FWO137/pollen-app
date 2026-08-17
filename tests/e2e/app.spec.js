@@ -166,3 +166,80 @@ test.describe('staleness refresh on return-to-tab', () => {
     await expect.poll(() => omCalls, { timeout: 5000 }).toBe(2);
   });
 });
+
+// Mocks navigator.standalone (iOS's "installed to home screen" signal),
+// Notification.requestPermission, and PushManager.subscribe/getSubscription
+// — a real push subscription needs an actual browser push service, which
+// isn't available in an automated test, so this verifies everything up to
+// that boundary: UI gating, and exactly what gets POSTed to the server.
+async function installPushMocks(page, { standalone = true } = {}) {
+  await page.addInitScript((standaloneVal) => {
+    if (standaloneVal) {
+      Object.defineProperty(window.navigator, 'standalone', { value: true, configurable: true });
+    }
+    window.Notification = window.Notification || function () {};
+    window.Notification.requestPermission = async () => 'granted';
+
+    let subscribed = null;
+    const fakeSub = {
+      endpoint: 'https://push.example/fake-endpoint',
+      toJSON() { return { endpoint: this.endpoint, keys: { p256dh: 'fake-p256dh', auth: 'fake-auth' } }; },
+      unsubscribe: async () => { subscribed = null; return true; },
+    };
+    if (window.PushManager) {
+      window.PushManager.prototype.subscribe = async function () { subscribed = fakeSub; return fakeSub; };
+      window.PushManager.prototype.getSubscription = async function () { return subscribed; };
+    }
+  }, standalone);
+}
+
+test.describe('push notification subscribe UI', () => {
+  test('a regular (non-standalone) tab shows a hint instead of a working button', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await installPushMocks(page, { standalone: false });
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(OM_FIXTURE) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+
+    await expect(page.locator('#notifySection')).toContainText('Zum Home-Bildschirm hinzufügen');
+    await expect(page.locator('#notifySection button')).toHaveCount(0);
+  });
+
+  test('installed (standalone) app: subscribing and unsubscribing POST the right payloads', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await installPushMocks(page, { standalone: true });
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(OM_FIXTURE) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+
+    let subscribeBody = null;
+    await page.route('**/.netlify/functions/subscribe', async (route) => {
+      subscribeBody = JSON.parse(route.request().postData());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    let unsubscribeBody = null;
+    await page.route('**/.netlify/functions/unsubscribe', async (route) => {
+      unsubscribeBody = JSON.parse(route.request().postData());
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+
+    const btn = page.locator('#notifySection button');
+    await expect(btn).toHaveText('Benachrichtigungen aktivieren');
+
+    await btn.click();
+    await expect(btn).toHaveText('Benachrichtigungen deaktivieren');
+    expect(subscribeBody.subscription.endpoint).toBe('https://push.example/fake-endpoint');
+    expect(subscribeBody.location).toMatchObject({ country: 'DE', dwd: 121, lgl: 'DEMUNC' }); // München, from stubMunichGeolocation
+    expect(subscribeBody.locationName).toBe('München');
+
+    await btn.click();
+    await expect(btn).toHaveText('Benachrichtigungen aktivieren');
+    expect(unsubscribeBody.endpoint).toBe('https://push.example/fake-endpoint');
+  });
+});

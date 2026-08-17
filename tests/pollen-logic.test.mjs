@@ -6,6 +6,7 @@ const {
   LOCATIONS, LEVELS, SNAP_MAX_KM,
   highestLevel, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
   parseDwdVal, extractDWDDays, processOM, processLGL, buildDays,
+  pollenDisplay, diffTodayPollens, formatChangeNotification,
 } = PollenLogic;
 
 test('haversineKm: same point is 0', () => {
@@ -211,4 +212,71 @@ test('buildDays: always produces at least 3 days even with no data', () => {
   const days = buildDays(null, null, null);
   assert.equal(days.length, 3);
   assert.equal(days[0].pollens.birch, null);
+});
+
+test('pollenDisplay: prefers omDisplay/omPct over the native display/pct', () => {
+  const entry = { level: 'medium', display: '1.5', unit: '/ 3', pct: 50, omDisplay: '45', omPct: 43 };
+  assert.deepEqual(pollenDisplay(entry), { value: '45', unit: 'K/m³', pct: 43 });
+});
+
+test('pollenDisplay: falls back to the native display/unit/pct when there is no omDisplay', () => {
+  const entry = { level: 'low', display: '1', unit: '/ 3', pct: 33 };
+  assert.deepEqual(pollenDisplay(entry), { value: '1', unit: '/ 3', pct: 33 });
+});
+
+test('pollenDisplay: null entry -> null', () => {
+  assert.equal(pollenDisplay(null), null);
+});
+
+test('diffTodayPollens: flags a level change even if the level text differs but nothing else', () => {
+  const prev = { grass: { level: 'low', display: '1', unit: '/ 3', pct: 33 } };
+  const curr = { grass: { level: 'medium', display: '2', unit: '/ 3', pct: 67 } };
+  const changes = diffTodayPollens(prev, curr);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].key, 'grass');
+  assert.equal(changes[0].prevLevel, 'low');
+  assert.equal(changes[0].currLevel, 'medium');
+  assert.equal(changes[0].currValue, '2 / 3');
+});
+
+test('diffTodayPollens: flags a value change even when the level stays the same', () => {
+  // Same severity bucket, but a different concentration — the user's
+  // explicit requirement: notify on ANY value change, not just level.
+  const prev = { grass: { level: 'medium', omDisplay: '45', omPct: 43 } };
+  const curr = { grass: { level: 'medium', omDisplay: '48', omPct: 45 } };
+  const changes = diffTodayPollens(prev, curr);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].prevValue, '45 K/m³');
+  assert.equal(changes[0].currValue, '48 K/m³');
+});
+
+test('diffTodayPollens: identical data -> no changes', () => {
+  const pollens = { grass: { level: 'medium', omDisplay: '45', omPct: 43 }, birch: null };
+  assert.deepEqual(diffTodayPollens(pollens, pollens), []);
+});
+
+test('diffTodayPollens: a pollen appearing for the first time counts as a change', () => {
+  const prev = { ragweed: null };
+  const curr = { ragweed: { level: 'low', omDisplay: '3', omPct: 10 } };
+  const changes = diffTodayPollens(prev, curr);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].prevValue, null);
+  assert.equal(changes[0].currValue, '3 K/m³');
+});
+
+test('diffTodayPollens: null vs undefined previous state are treated the same (no false positives)', () => {
+  const curr = { grass: { level: 'none', omDisplay: '0', omPct: 0 } };
+  assert.deepEqual(diffTodayPollens(undefined, curr), diffTodayPollens(null, curr));
+});
+
+test('formatChangeNotification: includes the location, overall level, and the new value per change', () => {
+  const changes = [
+    { key: 'grass', name: 'Gräser', prevLevel: 'low', currLevel: 'medium', prevValue: '5 K/m³', currValue: '9 K/m³' },
+    { key: 'mugwort', name: 'Beifuß', prevLevel: 'none', currLevel: 'low', prevValue: null, currValue: '1 K/m³' },
+  ];
+  const { title, body } = formatChangeNotification(changes, 'low', 'Pfarrkirchen');
+  assert.equal(title, 'Pollenwerte aktualisiert – Pfarrkirchen');
+  assert.match(body, /Geringe Belastung/);
+  assert.match(body, /Gräser: 9 K\/m³/);
+  assert.match(body, /Beifuß: 1 K\/m³/);
 });
