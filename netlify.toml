@@ -1,8 +1,15 @@
-# Static site, no bundler. package.json exists only for the Node test
-# suite (`npm test`) — explicitly skip the build step so its presence
-# doesn't make Netlify try to run `npm install`/`npm run build`.
+# Static site, no bundler — but the Netlify Functions below (push
+# notifications) have real runtime dependencies (web-push, @netlify/blobs)
+# that need installing so esbuild can bundle them. --omit=dev skips
+# @playwright/test (and its browser download) entirely rather than just
+# leaving it unused, since Netlify's build has no use for it.
 [build]
   publish = "."
+  command = "npm ci --omit=dev"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
 
 [[headers]]
   for = "/*"

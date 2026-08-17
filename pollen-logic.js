@@ -288,9 +288,62 @@
     });
   }
 
+  // Single source of truth for "what number/unit does this pollen entry
+  // actually show" — prefers the real K/m³ concentration (Open-Meteo) over
+  // DWD's 0-3 severity code whenever one is available. Used both by the
+  // app's own render() and by the change-notification diffing below, so
+  // the two can never disagree about what counts as "the displayed value".
+  function pollenDisplay(entry) {
+    if (!entry) return null;
+    if (entry.omDisplay != null) return { value: entry.omDisplay, unit: 'K/m³', pct: entry.omPct ?? entry.pct };
+    return { value: entry.display, unit: entry.unit, pct: entry.pct };
+  }
+
+  // Compares "today"'s pollens object between two points in time and
+  // returns one entry per pollen whose severity level or displayed
+  // value/unit changed. Used by the scheduled push-notification check.
+  function diffTodayPollens(prevPollens, currPollens) {
+    const changes = [];
+    for (const p of POLLEN) {
+      const prevEntry = prevPollens?.[p.key] ?? null;
+      const currEntry = currPollens?.[p.key] ?? null;
+      const prevLevel = prevEntry?.level ?? 'none';
+      const currLevel = currEntry?.level ?? 'none';
+      const prevD = pollenDisplay(prevEntry);
+      const currD = pollenDisplay(currEntry);
+      const prevKey = prevD ? `${prevD.value} ${prevD.unit}` : null;
+      const currKey = currD ? `${currD.value} ${currD.unit}` : null;
+      if (prevLevel !== currLevel || prevKey !== currKey) {
+        changes.push({
+          key: p.key,
+          name: p.name,
+          prevLevel, currLevel,
+          prevValue: prevKey,
+          currValue: currKey,
+        });
+      }
+    }
+    return changes;
+  }
+
+  // Builds the push notification title/body from a diff produced by
+  // diffTodayPollens(). Always includes the *new* value per changed
+  // pollen (not just "something changed"), per the app's actual use case.
+  function formatChangeNotification(changes, overallLevel, locationName) {
+    const where = locationName ? ` – ${locationName}` : '';
+    const title = `Pollenwerte aktualisiert${where}`;
+    const levelLine = SUMMARY_DE[overallLevel] ?? '';
+    const changeLine = changes
+      .map((c) => (c.currValue ? `${c.name}: ${c.currValue}` : `${c.name}: keine Daten mehr`))
+      .join(' · ');
+    const body = [levelLine, changeLine].filter(Boolean).join(' — ');
+    return { title, body };
+  }
+
   return {
     LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM,
     highestLevel, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
     parseDwdVal, extractDWDDays, processOM, processLGL, buildDays,
+    pollenDisplay, diffTodayPollens, formatChangeNotification,
   };
 });

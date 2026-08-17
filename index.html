@@ -450,6 +450,9 @@
       text-decoration: underline; text-decoration-color: var(--bdr);
       touch-action: manipulation;
     }
+    .theme-toggle:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+    .notify-hint { font-size: 11px; color: var(--t3); }
   </style>
 </head>
 <body>
@@ -495,7 +498,8 @@
       <a href="https://epin.lgl.bayern.de" target="_blank" rel="noopener">LGL Bayern ePIN</a> ·
       <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a><br>
       Kein Ersatz für ärztlichen Rat<br>
-      <button class="theme-toggle" id="themeToggle" type="button">Darstellung: <span id="themeToggleLabel">Automatisch</span></button>
+      <button class="theme-toggle" id="themeToggle" type="button">Darstellung: <span id="themeToggleLabel">Automatisch</span></button><br>
+      <span id="notifySection"></span>
     </footer>
 
   </div>
@@ -522,7 +526,7 @@
   const {
     LOCATIONS, POLLEN, LEVELS, SUMMARY_DE, SNAP_MAX_KM,
     highestLevel, fmtDate, fmtDataTimestamp, nearestLocation,
-    extractDWDDays, processOM, processLGL, buildDays,
+    extractDWDDays, processOM, processLGL, buildDays, pollenDisplay,
   } = window.PollenLogic;
 
   // ─── State ───────────────────────────────────────────────────────────────────
@@ -651,12 +655,13 @@
   // `silent`: true for background refreshes that already have a rendered
   // view on screen — skips the full-screen spinner/error takeover so the
   // stale-but-good view stays up instead of flashing to a loading state.
-  async function loadData({ silent = false } = {}) {
-    const seq = ++loadSeq;
-    if (!silent) showLoading();
+  // Same location-resolution rules loadData() uses to fetch pollen data —
+  // shared so the push-notification subscription (below) targets exactly
+  // the location currently being displayed, snap-distance guard included.
+  function currentLoc() {
     const snapped = LOCATIONS[state.locationKey];
     const tooFar = state.snapDistanceKm != null && state.snapDistanceKm > SNAP_MAX_KM;
-    const loc = state.customCoords
+    return state.customCoords
       ? {
           lat: state.customCoords.lat,
           lon: state.customCoords.lon,
@@ -665,6 +670,12 @@
           lgl: tooFar ? null : snapped?.lgl ?? null,
         }
       : snapped;
+  }
+
+  async function loadData({ silent = false } = {}) {
+    const seq = ++loadSeq;
+    if (!silent) showLoading();
+    const loc = currentLoc();
 
     try {
       let dwdDays = null, omDays = null, lglToday = null, dataTimestamp = null;
@@ -959,15 +970,9 @@
       const entry = dayData.pollens[p.key];
       const row = document.createElement('div');
       row.className = `p-row l-${entry.level}`;
-      // Prefer the real K/m³ concentration (from Open-Meteo) over DWD's
-      // 0-3 severity code whenever one is available, so the unit shown
-      // doesn't flip between "X / 3" and "K/m³" depending on which source
-      // happened to answer for that day — see buildDays() in pollen-logic.js.
-      const hasOm = entry.omDisplay != null;
-      row.style.setProperty('--pct', `${(hasOm ? entry.omPct : entry.pct) ?? 0}%`);
-      const valueHtml = hasOm
-        ? `${entry.omDisplay}<span class="u">K/m³</span>`
-        : `${entry.display}<span class="u">${entry.unit}</span>`;
+      const disp = pollenDisplay(entry); // prefers K/m³ (Open-Meteo) over DWD's 0-3 scale — see pollen-logic.js
+      row.style.setProperty('--pct', `${disp.pct ?? 0}%`);
+      const valueHtml = `${disp.value}<span class="u">${disp.unit}</span>`;
       row.innerHTML = `
         <div class="p-name"><span class="p-icon" aria-hidden="true">${p.icon}</span>${p.name}</div>
         <div class="p-track"><div class="p-fill"></div></div>
@@ -1078,6 +1083,91 @@
     applyTheme(next);
   });
 
+  // ─── Push notifications ──────────────────────────────────────────────────────
+  // iOS Safari only allows push subscriptions for a web app installed via
+  // "Zum Home-Bildschirm hinzufügen" (iOS 16.4+) — a regular Safari tab
+  // can't subscribe at all, no matter what this code does. That's an Apple
+  // platform requirement, not something to work around.
+  const VAPID_PUBLIC_KEY = 'BOrOc0iPPwoppCC1s1t1wwTMhEAAI1d438MmU62wggBF-Q5TeMRslw6coZWnT6NZfhc9yNCU6Esl9wLEwyRFASU';
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  }
+
+  function isStandalone() {
+    return window.navigator.standalone === true
+      || window.matchMedia('(display-mode: standalone)').matches;
+  }
+
+  function pushSupported() {
+    return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  }
+
+  async function initNotifyUI() {
+    const section = document.getElementById('notifySection');
+    if (!section) return;
+
+    if (!pushSupported()) {
+      section.innerHTML = '<span class="notify-hint">Benachrichtigungen: von diesem Browser nicht unterstützt.</span>';
+      return;
+    }
+    if (!isStandalone()) {
+      section.innerHTML = '<span class="notify-hint">Für Benachrichtigungen: Zum Home-Bildschirm hinzufügen und von dort öffnen.</span>';
+      return;
+    }
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'theme-toggle';
+    section.replaceChildren(btn);
+
+    async function refreshLabel() {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      btn.textContent = sub ? 'Benachrichtigungen deaktivieren' : 'Benachrichtigungen aktivieren';
+      return sub;
+    }
+
+    let currentSub = await refreshLabel();
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        if (currentSub) {
+          await fetch('/.netlify/functions/unsubscribe', {
+            method: 'POST',
+            body: JSON.stringify({ endpoint: currentSub.endpoint }),
+          }).catch(() => {});
+          await currentSub.unsubscribe();
+        } else {
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') return;
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          });
+          await fetch('/.netlify/functions/subscribe', {
+            method: 'POST',
+            body: JSON.stringify({
+              subscription: sub.toJSON(),
+              location: currentLoc(),
+              locationName: document.getElementById('locationName').textContent,
+            }),
+          });
+        }
+      } catch (err) {
+        console.error('notification toggle failed', err);
+      } finally {
+        currentSub = await refreshLabel();
+        btn.disabled = false;
+      }
+    });
+  }
+
   // ─── Init ────────────────────────────────────────────────────────────────────
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -1089,6 +1179,7 @@
 
   setupDateLabels();
   initTheme();
+  initNotifyUI();
 
   const cached = loadCache();
   if (cached) {
