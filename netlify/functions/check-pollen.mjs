@@ -3,7 +3,12 @@ import webpush from 'web-push';
 import PollenLogic from '../../pollen-logic.js';
 import { fetchTodayPollens, locationSignature } from '../lib/pollen-helpers.mjs';
 
-const { POLLEN, highestLevel, diffTodayPollens, formatChangeNotification } = PollenLogic;
+const { overallLevel, diffTodayPollens, formatChangeNotification } = PollenLogic;
+
+// netlify/functions/history.mjs only ever shows the client the last 7 days
+// (the trend view), but we keep a bit more than that here as a cushion —
+// e.g. in case a scheduled run is ever skipped right at a day boundary.
+const HISTORY_DAYS_KEPT = 14;
 
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT,
@@ -11,9 +16,23 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY,
 );
 
+// Upserts today's entry into this location's rolling history (one entry
+// per calendar day — updated in place on every run until the day rolls
+// over, so the trend view reflects the latest data even mid-day), trimmed
+// to HISTORY_DAYS_KEPT oldest-to-newest entries.
+async function recordHistory(historyStore, sig, dateStr, overall, pollens) {
+  const history = (await historyStore.get(sig, { type: 'json' })) ?? [];
+  const entry = { date: dateStr, overall, pollens };
+  const idx = history.findIndex((h) => h.date === dateStr);
+  if (idx >= 0) history[idx] = entry; else history.push(entry);
+  history.sort((a, b) => a.date.localeCompare(b.date));
+  await historyStore.setJSON(sig, history.slice(-HISTORY_DAYS_KEPT));
+}
+
 export default async () => {
   const subsStore = getStore('push-subscriptions');
   const snapStore = getStore('pollen-snapshots');
+  const historyStore = getStore('pollen-history');
 
   const { blobs } = await subsStore.list();
   if (blobs.length === 0) return new Response('no subscriptions', { status: 200 });
@@ -44,6 +63,13 @@ export default async () => {
       continue;
     }
 
+    const overall = overallLevel(pollens);
+
+    // History is recorded regardless of whether anything changed or this
+    // is the first check ever — it's the trend view's raw material, not
+    // part of the change-notification decision below.
+    await recordHistory(historyStore, sig, dateStr, overall, pollens);
+
     const snapshot = await snapStore.get(sig, { type: 'json' });
 
     if (!snapshot || snapshot.dateStr !== dateStr) {
@@ -62,9 +88,6 @@ export default async () => {
       continue;
     }
 
-    const overall = highestLevel(
-      POLLEN.filter((p) => pollens[p.key]).map((p) => pollens[p.key].level),
-    );
     const { title, body } = formatChangeNotification(changes, overall, locationName);
     const payload = JSON.stringify({ title, body });
 

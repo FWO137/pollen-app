@@ -40,6 +40,11 @@ mock.module('web-push', { defaultExport: fakeWebpush });
 const { default: subscribeHandler } = await import('../netlify/functions/subscribe.mjs');
 const { default: unsubscribeHandler } = await import('../netlify/functions/unsubscribe.mjs');
 const { default: checkPollenHandler } = await import('../netlify/functions/check-pollen.mjs');
+const { default: historyHandler } = await import('../netlify/functions/history.mjs');
+
+function getRequest(url) {
+  return new Request(url, { method: 'GET' });
+}
 
 function jsonRequest(body, method = 'POST') {
   const init = { method };
@@ -163,4 +168,99 @@ test('check-pollen: second run with a changed value sends a push with the new va
   assert.match(sentPushes[0].payload.body, /Gräser/);
   assert.match(sentPushes[0].payload.body, /45 K\/m³/);
   console.log('Notification sent:', sentPushes[0].payload);
+});
+
+test('history: GET rejects missing/invalid lat/lon', async () => {
+  const res1 = await historyHandler(getRequest('http://localhost/x'));
+  assert.equal(res1.status, 400);
+  const res2 = await historyHandler(getRequest('http://localhost/x?lat=abc&lon=12'));
+  assert.equal(res2.status, 400);
+});
+
+test('history: rejects non-GET', async () => {
+  const res = await historyHandler(jsonRequest({}));
+  assert.equal(res.status, 405);
+});
+
+test('history: reflects what check-pollen.mjs recorded across two runs — both entries present, both correctly attributed', async () => {
+  // Fresh location so this doesn't collide with the München history the
+  // earlier check-pollen tests already built up on the shared fake store.
+  const lat = 48.4320, lon = 12.9386; // Pfarrkirchen
+  const subsStore = fakeGetStore('push-subscriptions');
+  await subsStore.setJSON('sub-history-test', {
+    subscription: { endpoint: 'https://push.example/history-test', keys: { p256dh: 'p', auth: 'a' } },
+    location: { lat, lon, country: 'DE', dwd: 122, lgl: null },
+    locationName: 'Pfarrkirchen',
+  });
+
+  const realFetch = globalThis.fetch;
+  const fakeToday = new Date().toISOString().slice(0, 10);
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('opendata.dwd.de')) {
+      return { ok: true, json: async () => ({ last_update: `${fakeToday} 11:00`, content: [] }) };
+    }
+    if (String(url).includes('air-quality-api.open-meteo.com')) {
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            grass_pollen: [7], alder_pollen: [0], birch_pollen: [0],
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ measurements: [] }) };
+  };
+
+  await checkPollenHandler(); // first run for this location -> baseline + first history entry
+  globalThis.fetch = realFetch;
+
+  const res = await historyHandler(getRequest(`http://localhost/x?lat=${lat}&lon=${lon}`));
+  assert.equal(res.status, 200);
+  const { history } = await res.json();
+  assert.equal(history.length, 1);
+  assert.equal(history[0].date, fakeToday);
+  assert.equal(history[0].overall, 'low'); // grass=7 K/m³ -> low on the grass_pollen [10,50,200] thresholds
+  assert.equal(history[0].pollens.grass.display, '7');
+});
+
+test('history: same-day re-runs update the existing entry in place instead of appending a duplicate', async () => {
+  const lat = 48.4320, lon = 12.9386; // same Pfarrkirchen location as the previous test, same day
+  const realFetch = globalThis.fetch;
+  const fakeToday = new Date().toISOString().slice(0, 10);
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('opendata.dwd.de')) {
+      return { ok: true, json: async () => ({ last_update: `${fakeToday} 11:00`, content: [] }) };
+    }
+    if (String(url).includes('air-quality-api.open-meteo.com')) {
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            grass_pollen: [60], alder_pollen: [0], birch_pollen: [0], // now high, same day
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ measurements: [] }) };
+  };
+
+  await checkPollenHandler();
+  globalThis.fetch = realFetch;
+
+  const res = await historyHandler(getRequest(`http://localhost/x?lat=${lat}&lon=${lon}`));
+  const { history } = await res.json();
+  assert.equal(history.length, 1, 'still one entry for the day, not two');
+  assert.equal(history[0].pollens.grass.display, '60', 'updated in place to the latest value');
+});
+
+test('history: an unsubscribed/never-checked location returns an empty history, not an error', async () => {
+  const res = await historyHandler(getRequest('http://localhost/x?lat=1.23&lon=4.56'));
+  assert.equal(res.status, 200);
+  const { history } = await res.json();
+  assert.deepEqual(history, []);
 });

@@ -243,3 +243,93 @@ test.describe('push notification subscribe UI', () => {
     expect(unsubscribeBody.endpoint).toBe('https://push.example/fake-endpoint');
   });
 });
+
+test.describe('7-day forecast tabs', () => {
+  test('renders one tab per forecast day and "Heute" stays reachable after scrolling to a later day', async ({ page }) => {
+    // Regression test: the day-tabs strip used to be `justify-content:
+    // flex-end`, which packs overflow toward the *start* of the container.
+    // A plain LTR container can't scroll to negative scrollLeft, so once
+    // there were more tabs than fit on screen, "Heute" (the first/leftmost
+    // tab) became permanently unreachable — clicking it timed out because
+    // its on-screen position was clipped away by the container's own
+    // overflow, and the click landed on the page behind it instead.
+    await stubMunichGeolocation(page);
+    const om7 = { hourly: { time: Array.from({ length: 7 }, (_, i) => `2026-08-${17 + i}T00:00`), grass_pollen: Array(7).fill(9), alder_pollen: Array(7).fill(0), birch_pollen: Array(7).fill(0), mugwort_pollen: Array(7).fill(0), ragweed_pollen: Array(7).fill(0), olive_pollen: Array(7).fill(0) } };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om7) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('.day-tab')).toHaveCount(7);
+    await expect(page.locator('.day-tab').first()).toHaveText(/Heute/);
+
+    // Jump to the last tab (forces the strip to scroll, since 7 tabs don't fit on a phone width).
+    await page.locator('.day-tab').last().click();
+    await expect(page.locator('.day-tab').last()).toHaveAttribute('aria-selected', 'true');
+
+    // "Heute" must still be clickable after that, not stuck off-screen.
+    await page.locator('.day-tab').first().click({ timeout: 5000 });
+    await expect(page.locator('.day-tab').first()).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+test.describe('season-aware "Kein Flug"', () => {
+  test('splits pollens with no data into "in season" vs "outside its season" instead of lumping them together', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    // Fixed to a date in August: mugwort (Jul–Sep) is in season but 0 here;
+    // alder (Jan–Apr) is fully out of season.
+    await page.addInitScript(() => {
+      const RealDate = Date;
+      class FixedDate extends RealDate {
+        constructor(...args) { if (args.length === 0) return new RealDate(2026, 7, 17, 8, 0, 0); return new RealDate(...args); }
+        static now() { return new RealDate(2026, 7, 17, 8, 0, 0).getTime(); }
+      }
+      window.Date = FixedDate;
+    });
+    const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [9], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+
+    const groups = await page.locator('.no-pollen').allTextContents();
+    const inSeason = groups.find((g) => g.includes('Kein Flug'));
+    const outOfSeason = groups.find((g) => g.includes('Außerhalb der Saison'));
+    expect(inSeason).toMatch(/Beifuß/); // mugwort: Jul–Sep, currently 0
+    expect(outOfSeason).toMatch(/Erle/); // alder: Jan–Apr, out of season in August
+  });
+});
+
+test.describe('7-day trend view', () => {
+  const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [9], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+
+  test('renders one dot per history day, colored by that day\'s overall level', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    const history = { history: ['none', 'low', 'medium', 'high', 'very-high'].map((overall, i) => ({ date: `2026-08-1${3 + i}`, overall, pollens: {} })) };
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(history) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('.trend-dot')).toHaveCount(5);
+    await expect(page.locator('.trend-dot').nth(3)).toHaveClass(/l-high/);
+  });
+
+  test('hides entirely when there is no history yet (not subscribed / too new), instead of showing an empty section', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(page.locator('.trend-wrap')).toHaveCount(0);
+  });
+});
