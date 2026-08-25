@@ -689,7 +689,13 @@
       const r = await fetchWithTimeout(reverseGeocodeUrl(lat, lon), 6000);
       if (!r.ok) return null;
       const data = await r.json();
-      return data.city || data.locality || data.principalSubdivision || null;
+      // `locality` is BigDataCloud's match for the actual place at these
+      // coordinates; `city` is the nearest place *it classifies as a city*,
+      // which for a small village is often a bigger neighboring town (e.g.
+      // Julbach resolving to "Pfarrkirchen") — precisely the "not my real
+      // location" complaint this feature exists to fix, so it only gets
+      // used as a fallback when there's no locality at all.
+      return data.locality || data.city || data.principalSubdivision || null;
     } catch {
       return null; // offline / API down — the snapped anchor-city label stays as a fallback
     }
