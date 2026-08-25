@@ -414,6 +414,10 @@
       text-decoration: underline; text-decoration-color: var(--bdr);
       touch-action: manipulation;
     }
+    .trend-empty {
+      font-size: 12px; color: var(--t2); line-height: 1.6;
+      margin: 0 0 10px;
+    }
     .trend-row { display: flex; gap: 10px; }
     .trend-day { display: flex; flex-direction: column; align-items: center; gap: 6px; }
     .trend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
@@ -1285,6 +1289,29 @@
     renderTrendView();
   }
 
+  // Shown in place of the trend dots when a pollen row was tapped but no
+  // history exists yet to draw from — points at the actual cause (no push
+  // subscription has ever run for this location) instead of leaving the
+  // tap looking like it silently did nothing.
+  function buildNoHistoryHint() {
+    const hint = document.createElement('div');
+    hint.className = 'trend-wrap';
+    hint.innerHTML = `
+      <div class="trend-label">Verlauf</div>
+      <p class="trend-empty">Noch kein Verlauf vorhanden. Verlaufsdaten werden erst gesammelt, sobald Benachrichtigungen für diesen Standort aktiviert sind.</p>`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'trend-clear';
+    btn.textContent = 'Benachrichtigungen aktivieren';
+    btn.addEventListener('click', () => {
+      const notifyBtn = document.querySelector('#notifySection button');
+      notifyBtn?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      notifyBtn?.focus();
+    });
+    hint.appendChild(btn);
+    return hint;
+  }
+
   // Redraws #trendSection from state.history — either the overall level per
   // day (default), or one pollen's own level per day after tapping that
   // pollen's row in the list above. Doesn't re-fetch; called from both
@@ -1292,7 +1319,17 @@
   function renderTrendView() {
     const section = document.getElementById('trendSection');
     if (!section) return;
-    if (!state.history) { section.replaceChildren(); return; }
+    if (!state.history) {
+      // With no history at all, silently hiding the section (as before) is
+      // right for the default page load — most visitors never subscribed
+      // to push, and there's nothing wrong to report. But once someone has
+      // actively tapped a pollen row wanting to see its trend, that same
+      // silence reads as "the tap did nothing" (the row still highlights —
+      // only the trend section stays empty). Explain the gap instead.
+      section.replaceChildren();
+      if (state.selectedPollen) section.appendChild(buildNoHistoryHint());
+      return;
+    }
 
     const pollenDef = state.selectedPollen ? POLLEN.find(p => p.key === state.selectedPollen) : null;
     const todayStr = new Date().toISOString().split('T')[0];
