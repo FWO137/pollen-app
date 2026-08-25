@@ -679,23 +679,30 @@
   // fix for display only; currentLoc() (below) still feeds the exact
   // coordinates to Open-Meteo and the snapped dwd/lgl ids to DWD/LGL exactly
   // as before.
+  //
+  // Uses Nominatim (OpenStreetMap) rather than a commercial free-tier API:
+  // this was tried first with BigDataCloud's reverse-geocode-client, but
+  // its free dataset only resolves small villages to the nearest larger
+  // town it classifies as a "city" (reported: Julbach -> "Pfarrkirchen",
+  // exactly the anchor-city snap this feature exists to get away from).
+  // OSM's community-mapped `address.village`/`address.town` coverage for
+  // German villages is far more granular. Client-side use like this is
+  // within Nominatim's usage policy at this app's request volume (one
+  // lookup per location refresh, well under its 1 req/s limit) —
+  // https://operations.osmfoundation.org/policies/nominatim/
   function reverseGeocodeUrl(lat, lon) {
-    return `https://api.bigdatacloud.net/data/reverse-geocode-client`
-      + `?latitude=${lat}&longitude=${lon}&localityLanguage=de`;
+    return `https://nominatim.openstreetmap.org/reverse`
+      + `?format=jsonv2&lat=${lat}&lon=${lon}&zoom=16&addressdetails=1&accept-language=de`;
   }
 
   async function reverseGeocode(lat, lon) {
     try {
       const r = await fetchWithTimeout(reverseGeocodeUrl(lat, lon), 6000);
       if (!r.ok) return null;
-      const data = await r.json();
-      // `locality` is BigDataCloud's match for the actual place at these
-      // coordinates; `city` is the nearest place *it classifies as a city*,
-      // which for a small village is often a bigger neighboring town (e.g.
-      // Julbach resolving to "Pfarrkirchen") — precisely the "not my real
-      // location" complaint this feature exists to fix, so it only gets
-      // used as a fallback when there's no locality at all.
-      return data.locality || data.city || data.principalSubdivision || null;
+      const { address: a } = await r.json();
+      // Ordered most to least specific — a small village only has
+      // `village`/`hamlet` populated, a larger place only `town`/`city`.
+      return a?.village || a?.town || a?.city || a?.municipality || a?.hamlet || a?.suburb || null;
     } catch {
       return null; // offline / API down — the snapped anchor-city label stays as a fallback
     }
