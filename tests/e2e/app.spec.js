@@ -384,6 +384,31 @@ test.describe('per-pollen trend selection', () => {
     await expect(grassRow).toHaveAttribute('aria-pressed', 'false');
     await expect(page.locator('.trend-label')).toHaveText('Verlauf');
   });
+
+  // Regression test: tapping a row when no history exists yet (no push
+  // subscription has ever run for this location) used to highlight the row
+  // and then leave the trend section silently empty — indistinguishable
+  // from the tap doing nothing at all.
+  test('tapping a pollen row with no history yet explains why, instead of doing nothing visible', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [45], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('.trend-wrap')).toHaveCount(0);
+
+    const grassRow = page.locator('.p-row[data-pollen="grass"]');
+    await grassRow.click();
+
+    await expect(grassRow).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.trend-wrap')).toBeVisible();
+    await expect(page.locator('.trend-empty')).toContainText('Noch kein Verlauf');
+    await expect(page.locator('.trend-dot')).toHaveCount(0);
+  });
 });
 
 test.describe('share button', () => {
