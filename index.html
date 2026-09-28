@@ -431,6 +431,73 @@
     .trend-dot.unknown     { background: transparent; border: 1px dashed var(--t3); }
     .trend-date { font-size: 9px; color: var(--t3); }
     .trend-date.today { color: var(--t1); font-weight: 600; }
+    .trend-legend {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 10px; font-size: 10px; color: var(--t3);
+    }
+    .legend-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--t3); flex-shrink: 0; }
+    .legend-mark.sq { border-radius: 2px; }
+
+    /* ── Symptom diary ── */
+    /* Rounded squares (not circles like .trend-dot) so the user's own
+       entries stay distinguishable from pollen levels in the trend view.
+       Colors mirror the pollen scale on purpose — leicht/mittel/stark line
+       up with low/medium/high, so matching days read as matching colors. */
+    .sym-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .sym-dot.s-none     { background: var(--c-none); opacity: 0.5; }
+    .sym-dot.s-mild     { background: var(--c-low); }
+    .sym-dot.s-moderate { background: var(--c-med); }
+    .sym-dot.s-severe   { background: var(--c-high); }
+    .sym-dot.unknown    { background: transparent; border: 1px dashed var(--t3); }
+
+    .symptom-card {
+      margin-bottom: 40px;
+      padding: 14px 16px;
+      border: 1px solid var(--bdr);
+      border-radius: 14px;
+    }
+    .symptom-card .hero-eyebrow { margin-bottom: 12px; }
+    .sym-options { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .sym-opt {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: none;
+      border: 1px solid var(--bdr);
+      border-radius: 20px;
+      padding: 7px 13px;
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      color: var(--t1); cursor: pointer;
+      touch-action: manipulation; min-height: 36px;
+      -webkit-user-select: none; user-select: none;
+    }
+    .sym-opt:active { opacity: 0.6; }
+    .sym-opt[aria-pressed="true"] { border-color: var(--t2); background: var(--bdr); font-weight: 700; }
+    /* 16px: anything smaller makes iOS Safari zoom the page on focus. */
+    .sym-note {
+      display: block; width: 100%;
+      font-family: inherit; font-size: 16px; color: var(--t1);
+      background: none;
+      border: 1px solid var(--bdr); border-radius: 10px;
+      padding: 8px 12px;
+    }
+    .sym-note::placeholder { color: var(--t3); }
+    .sym-note:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .sym-foot {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      margin-top: 8px; font-size: 11px; color: var(--t3);
+    }
+    .sym-summary {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      font-family: inherit; font-size: 13px; color: var(--t2); text-align: left;
+      background: none; border: none; padding: 0; cursor: pointer;
+      touch-action: manipulation; min-height: 36px;
+    }
+    .sym-summary strong { color: var(--t1); font-weight: 600; }
+    .sym-summary-note {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--t3);
+    }
+    .sym-edit { margin-left: auto; font-size: 11px; text-decoration: underline; text-decoration-color: var(--bdr); }
 
     /* ── State views ── */
     .state-view {
@@ -575,6 +642,12 @@
     <!-- Hero (populated by render()) -->
     <div id="summary" style="display:none;"></div>
 
+    <!-- Symptom diary entry point (populated by renderSymptomSection()).
+         Kept out of #summary on purpose: render() rebuilds that on every
+         day-tab click, which would wipe a half-typed note. Local-only —
+         entries never leave the device. -->
+    <div id="symptomSection" style="display:none;"></div>
+
     <!-- Pollen list (populated by render()) -->
     <div id="content"></div>
 
@@ -622,6 +695,8 @@
     LOCATIONS, POLLEN, LEVELS, SUMMARY_DE, SNAP_MAX_KM, RAIN_THRESHOLD_MM,
     overallLevel, isInSeason, fmtDate, fmtDataTimestamp, nearestLocation,
     extractDWDDays, processOM, processLGL, buildDays, processWeather, pollenDisplay,
+    SYMPTOM_LEVELS, SYMPTOM_LABELS_DE, SYMPTOM_NOTE_MAX,
+    localDateStr, sanitizeSymptomEntries, upsertSymptomEntry, mergeSymptomsWithHistory,
   } = window.PollenLogic;
 
   // ─── State ───────────────────────────────────────────────────────────────────
@@ -635,6 +710,9 @@
     history:        null, // last fetched by loadTrend(); null until it succeeds
     selectedPollen: null, // pollen key whose own history the trend section shows, or null for the overall trend
     rainByDate:     null, // { [date]: precipitation_sum in mm }, last fetched by loadData(); null until it succeeds
+    symptoms:       [],   // symptom diary entries [{ date, severity, note }], oldest first — see loadSymptoms()
+    symptomEditing: false, // true while today's already-saved entry is reopened for editing
+    symptomDay:     null, // local date the diary card was last rendered for (midnight rollover check)
     allergens:      null, // "Meine Allergene": array of POLLEN keys, or null = no filter (all pollens, the default)
   };
 
@@ -797,6 +875,29 @@
     }
   }
 
+  // ─── Symptom diary (localStorage) ────────────────────────────────────────────
+  // The user's own entries, device-local only (no backend by design). Unlike
+  // CACHE_KEY this isn't disposable — it's the only copy — so it gets its
+  // own key and is never cleared by a data refresh.
+  const SYMPTOM_KEY = 'pollenSymptomsV1';
+
+  function loadSymptoms() {
+    try {
+      return sanitizeSymptomEntries(JSON.parse(localStorage.getItem(SYMPTOM_KEY) || '[]'));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveSymptoms() {
+    try {
+      localStorage.setItem(SYMPTOM_KEY, JSON.stringify(state.symptoms));
+      return true;
+    } catch {
+      return false; // private browsing / quota — the entry still shows for this session
+    }
+  }
+
   // ─── Load ────────────────────────────────────────────────────────────────────
   // Sequencing token: if a manual refresh is triggered while a background
   // refresh (or another manual one) is still in flight, both run
@@ -891,6 +992,7 @@
   function showLocationPicker(permissionDenied, debugInfo) {
     document.getElementById('locationName').textContent = 'Standort wählen';
     document.getElementById('summary').style.display = 'none';
+    document.getElementById('symptomSection').style.display = 'none';
     document.getElementById('glowRing').className = 'glow-ring';
 
     const DE_KEYS = ['pfarrkirchen','munich','nuremberg','augsburg','ingolstadt','regensburg','stuttgart','freiburg','ulm','constance'];
@@ -1050,6 +1152,7 @@
   function showLoading() {
     setGlow('');
     document.getElementById('summary').style.display = 'none';
+    document.getElementById('symptomSection').style.display = 'none';
     document.getElementById('content').innerHTML = `
       <div class="state-view">
         <div class="spinner"></div>
@@ -1061,6 +1164,7 @@
   function showError(msg) {
     setGlow('');
     document.getElementById('summary').style.display = 'none';
+    document.getElementById('symptomSection').style.display = 'none';
     document.getElementById('content').innerHTML = `
       <div class="state-view">
         <p style="font-size:24px">⚠️</p>
@@ -1151,6 +1255,15 @@
     const standText  = fmtDataTimestamp(state.dataTimestamp);
 
     renderHero(dayData);
+
+    // Only (re)built when hidden or the day rolled over — not on every
+    // render(), which also runs per day-tab click and would otherwise wipe
+    // a half-typed note. Deliberately outside renderHero(): the allergen
+    // filter calls renderHero() directly on its own (applyAllergenFilter()),
+    // and toggling it shouldn't also re-trigger the symptom card.
+    const symptomEl = document.getElementById('symptomSection');
+    if (symptomEl.style.display === 'none' || state.symptomDay !== localDateStr()) renderSymptomSection();
+    symptomEl.style.display = 'block';
 
     // ── Pollen list ──
     const sortedPollen = [...POLLEN].sort((a, b) => {
@@ -1320,13 +1433,14 @@
 
   // History only exists for locations with an active push subscription
   // (netlify/functions/check-pollen.mjs is the only thing that ever writes
-  // it), so an empty/failed result here just quietly hides the section —
-  // it's not an error state worth bothering the user with.
+  // it), so an empty/failed result here just quietly drops the pollen part
+  // of the section — it's not an error state worth bothering the user with.
+  // renderTrendView() still shows the user's own symptom entries, if any.
   async function loadTrend() {
     const section = document.getElementById('trendSection');
     if (!section) return;
     const loc = currentLoc();
-    if (!loc) { state.history = null; section.replaceChildren(); return; }
+    if (!loc) { state.history = null; renderTrendView(); return; }
 
     let history;
     try {
@@ -1335,7 +1449,7 @@
       ({ history } = await r.json());
     } catch {
       state.history = null;
-      section.replaceChildren();
+      renderTrendView();
       return;
     }
 
@@ -1371,10 +1485,19 @@
   // day (default), or one pollen's own level per day after tapping that
   // pollen's row in the list above. Doesn't re-fetch; called from both
   // loadTrend() (after a fresh fetch) and the pollen-row tap handler.
+  //
+  // The user's own symptom diary entries are overlaid on the same date
+  // axis (a square marker above each day's pollen dot), so high-pollen and
+  // bad-symptom days line up at a glance. With no pollen history at all,
+  // the symptom row is still shown on its own rather than hiding it too.
   function renderTrendView() {
     const section = document.getElementById('trendSection');
     if (!section) return;
-    if (!state.history) {
+    const todayStr = localDateStr();
+    const days = mergeSymptomsWithHistory(state.history, state.symptoms, todayStr);
+    const showSymptoms = days.some(d => d.symptom);
+
+    if (!state.history && !showSymptoms) {
       // With no history at all, silently hiding the section (as before) is
       // right for the default page load — most visitors never subscribed
       // to push, and there's nothing wrong to report. But once someone has
@@ -1386,8 +1509,8 @@
       return;
     }
 
-    const pollenDef = state.selectedPollen ? POLLEN.find(p => p.key === state.selectedPollen) : null;
-    const todayStr = new Date().toISOString().split('T')[0];
+    const showPollen = !!state.history;
+    const pollenDef = showPollen && state.selectedPollen ? POLLEN.find(p => p.key === state.selectedPollen) : null;
 
     const wrap = document.createElement('div');
     wrap.className = 'trend-wrap';
@@ -1396,7 +1519,7 @@
     labelRow.className = 'trend-label-row';
     const label = document.createElement('div');
     label.className = 'trend-label';
-    label.textContent = pollenDef ? `Verlauf: ${pollenDef.name}` : 'Verlauf';
+    label.textContent = !showPollen ? 'Deine Symptome' : pollenDef ? `Verlauf: ${pollenDef.name}` : 'Verlauf';
     labelRow.appendChild(label);
     if (pollenDef) {
       const clear = document.createElement('button');
@@ -1415,25 +1538,125 @@
 
     const row = document.createElement('div');
     row.className = 'trend-row';
-    for (const day of state.history.slice(-7)) {
+    for (const { date, pollen: day, symptom } of days) {
       const d = document.createElement('div');
       d.className = 'trend-day';
-      const weekday = new Date(day.date + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short' }).replace(/\.$/, '');
-      const isToday = day.date === todayStr;
-      const entry = pollenDef ? (day.pollens?.[pollenDef.key] ?? null) : null;
-      const level = pollenDef ? entry?.level : day.overall;
-      const dotClass = level ? `l-${level}` : 'unknown';
-      const disp = pollenDef && entry ? pollenDisplay(entry) : null;
-      const title = pollenDef
-        ? (disp ? `${disp.value} ${disp.unit}` : 'Keine Daten')
-        : (SUMMARY_DE[day.overall] ?? '');
-      d.innerHTML = `
-        <span class="trend-dot ${dotClass}" title="${title}"></span>
-        <span class="trend-date${isToday ? ' today' : ''}">${weekday}</span>`;
+      const weekday = new Date(date + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'short' }).replace(/\.$/, '');
+      const isToday = date === todayStr;
+
+      if (showSymptoms) {
+        // Built via the DOM API rather than innerHTML: the title carries the
+        // user's free-text note.
+        const mark = document.createElement('span');
+        mark.className = `sym-dot ${symptom ? `s-${symptom.severity}` : 'unknown'}`;
+        mark.title = symptom
+          ? `Symptome: ${SYMPTOM_LABELS_DE[symptom.severity]}${symptom.note ? ` – ${symptom.note}` : ''}`
+          : 'Kein Eintrag';
+        d.appendChild(mark);
+      }
+
+      if (showPollen) {
+        const entry = pollenDef ? (day?.pollens?.[pollenDef.key] ?? null) : null;
+        const level = pollenDef ? entry?.level : day?.overall;
+        const dotClass = level ? `l-${level}` : 'unknown';
+        const disp = pollenDef && entry ? pollenDisplay(entry) : null;
+        const title = !day ? 'Keine Pollendaten'
+          : pollenDef ? (disp ? `${disp.value} ${disp.unit}` : 'Keine Daten')
+          : (SUMMARY_DE[day.overall] ?? '');
+        d.insertAdjacentHTML('beforeend', `<span class="trend-dot ${dotClass}" title="${title}"></span>`);
+      }
+
+      d.insertAdjacentHTML('beforeend', `<span class="trend-date${isToday ? ' today' : ''}">${weekday}</span>`);
       row.appendChild(d);
     }
     wrap.appendChild(row);
+
+    if (showSymptoms && showPollen) {
+      const legend = document.createElement('div');
+      legend.className = 'trend-legend';
+      legend.innerHTML = `
+        <span class="legend-mark sq" aria-hidden="true"></span>Deine Symptome
+        <span class="hero-sep"></span>
+        <span class="legend-mark" aria-hidden="true"></span>Pollenbelastung`;
+      wrap.appendChild(legend);
+    }
+
     section.replaceChildren(wrap);
+    // Symptoms alone, but a pollen row was tapped: still explain why its
+    // pollen trend is missing, same as the no-data-at-all case above.
+    if (!showPollen && state.selectedPollen) section.appendChild(buildNoHistoryHint());
+  }
+
+  // ─── Symptom diary card ──────────────────────────────────────────────────────
+  // "Wie fühlst du dich heute?" — one entry per local calendar day. Tapping
+  // a severity saves immediately (together with the optional note). Once
+  // today has an entry the card collapses to a one-line summary; tapping
+  // that reopens the editor pre-filled, and saving again replaces the
+  // day's entry (upsertSymptomEntry()).
+  function renderSymptomSection() {
+    const section = document.getElementById('symptomSection');
+    if (!section) return;
+    const today = localDateStr();
+    if (state.symptomDay !== today) state.symptomEditing = false; // new day, fresh card
+    state.symptomDay = today;
+    const entry = state.symptoms.find(e => e.date === today) ?? null;
+
+    const card = document.createElement('div');
+    card.className = 'symptom-card';
+
+    if (entry && !state.symptomEditing) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sym-summary';
+      btn.dataset.action = 'edit';
+      btn.setAttribute('aria-label', `Heutiger Symptom-Eintrag: ${SYMPTOM_LABELS_DE[entry.severity]}. Ändern`);
+      btn.innerHTML = `
+        <span class="sym-dot s-${entry.severity}" aria-hidden="true"></span>
+        <span>Heute: <strong>${SYMPTOM_LABELS_DE[entry.severity]}</strong></span>
+        <span class="sym-summary-note"></span>
+        <span class="sym-edit">Ändern</span>`;
+      btn.querySelector('.sym-summary-note').textContent = entry.note;
+      card.appendChild(btn);
+      section.replaceChildren(card);
+      return;
+    }
+
+    card.innerHTML = `
+      <div class="hero-eyebrow" id="symptomQuestion">Wie fühlst du dich heute?</div>
+      <div class="sym-options" role="group" aria-labelledby="symptomQuestion">
+        ${SYMPTOM_LEVELS.map(s => `
+          <button type="button" class="sym-opt" data-severity="${s}" aria-pressed="${entry?.severity === s}">
+            <span class="sym-dot s-${s}" aria-hidden="true"></span>${SYMPTOM_LABELS_DE[s]}
+          </button>`).join('')}
+      </div>
+      <input type="text" class="sym-note" maxlength="${SYMPTOM_NOTE_MAX}"
+             placeholder="Notiz (optional), z. B. Augen jucken" aria-label="Notiz zu deinen Symptomen (optional)">
+      <div class="sym-foot">
+        <span>Tippe auf eine Stufe zum Speichern. Bleibt nur auf diesem Gerät.</span>
+      </div>`;
+    card.querySelector('.sym-note').value = entry?.note ?? '';
+    if (entry) {
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'trend-clear';
+      cancel.dataset.action = 'cancel';
+      cancel.textContent = 'Abbrechen';
+      card.querySelector('.sym-foot').appendChild(cancel);
+    }
+    section.replaceChildren(card);
+  }
+
+  function saveTodaySymptom(severity) {
+    const today = localDateStr();
+    const note = document.querySelector('#symptomSection .sym-note')?.value ?? '';
+    state.symptoms = upsertSymptomEntry(state.symptoms, { date: today, severity, note }, today);
+    const persisted = saveSymptoms();
+    state.symptomEditing = false;
+    renderSymptomSection();
+    renderTrendView();
+    document.querySelector('#symptomSection .sym-summary')?.focus();
+    announce(`Symptome für heute gespeichert: ${SYMPTOM_LABELS_DE[severity]}`
+      + (persisted ? '' : '. Hinweis: Speichern auf diesem Gerät nicht möglich, Eintrag gilt nur bis zum Schließen.'));
   }
 
   function syncTabs() {
@@ -1483,6 +1706,33 @@
     togglePollenSelection(row.dataset.pollen);
   });
 
+  // Symptom diary card — delegated once on the persistent container, same
+  // as #content above, since renderSymptomSection() replaces its children.
+  document.getElementById('symptomSection').addEventListener('click', e => {
+    const opt = e.target.closest('.sym-opt');
+    if (opt) { saveTodaySymptom(opt.dataset.severity); return; }
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (action === 'edit') {
+      state.symptomEditing = true;
+      renderSymptomSection();
+      (document.querySelector('#symptomSection .sym-opt[aria-pressed="true"]')
+        ?? document.querySelector('#symptomSection .sym-opt'))?.focus();
+    } else if (action === 'cancel') {
+      state.symptomEditing = false;
+      renderSymptomSection();
+      document.querySelector('#symptomSection .sym-summary')?.focus();
+    }
+  });
+  // Enter in the note field saves with the already-selected level (when
+  // editing an existing entry) — otherwise a level still has to be picked.
+  document.getElementById('symptomSection').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || !e.target.closest('.sym-note')) return;
+    const pressed = document.querySelector('#symptomSection .sym-opt[aria-pressed="true"]');
+    if (!pressed) return;
+    e.preventDefault();
+    saveTodaySymptom(pressed.dataset.severity);
+  });
+
   // ─── Staleness refresh on return-to-tab ─────────────────────────────────────
   // DWD refreshes once a day, LGL/Open-Meteo hourly — with no other trigger,
   // a tab left open all day (or backgrounded and returned to) would keep
@@ -1493,6 +1743,13 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    // A tab/PWA left open overnight must not keep offering yesterday's
+    // diary entry as "today". Only on an actual date change, so returning
+    // mid-edit doesn't wipe a half-typed note.
+    if (state.symptomDay && state.symptomDay !== localDateStr()) {
+      renderSymptomSection();
+      renderTrendView();
+    }
     if (lastLoadedAt == null || Date.now() - lastLoadedAt < STALE_MS) return;
     dwdCache = null;
     lglCache = null;
@@ -1696,6 +1953,7 @@
   initTheme();
   initAllergens();
   initNotifyUI();
+  state.symptoms = loadSymptoms();
 
   const cached = loadCache();
   if (cached) {
