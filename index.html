@@ -79,7 +79,7 @@
        external keyboard or Switch Control, which don't use mouse/touch
        and rely entirely on a visible focus indicator. :focus-visible
        (not :focus) keeps mouse/touch clicks free of an outline. */
-    a:focus-visible, button:focus-visible, [role="button"]:focus-visible {
+    a:focus-visible, button:focus-visible, summary:focus-visible, [role="button"]:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 3px;
       border-radius: 6px;
@@ -528,6 +528,29 @@
     .theme-toggle:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
 
     .notify-hint { font-size: 11px; color: var(--t3); }
+
+    /* ── Meine Allergene ── */
+    .allergen-settings summary { display: inline; list-style: none; }
+    .allergen-settings summary::-webkit-details-marker { display: none; }
+    .allergen-list {
+      display: flex; flex-wrap: wrap; gap: 0 14px;
+      padding: 4px 0 2px;
+    }
+    .allergen-opt {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--t2);
+      min-height: 32px; cursor: pointer;
+      touch-action: manipulation;
+      -webkit-user-select: none; user-select: none;
+    }
+    .allergen-opt input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+    .allergen-opt input:disabled + span { opacity: 0.6; }
+
+    /* Pollen outside the user's selection stay in the DOM (so toggling is
+       just a class flip, no re-render) but fade into the background. Set
+       on the row's children, not .p-row itself: its fadeIn animation
+       (fill-mode: both) would otherwise pin the row's own opacity at 1. */
+    .p-row.not-mine > *, .np-item.not-mine { opacity: 0.3; transition: opacity 0.2s ease; }
   </style>
 </head>
 <body>
@@ -565,7 +588,12 @@
       <a href="https://epin.lgl.bayern.de" target="_blank" rel="noopener">LGL Bayern ePIN</a> ·
       <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a><br>
       Kein Ersatz für ärztlichen Rat<br>
-      <button class="theme-toggle" id="themeToggle" type="button">Darstellung: <span id="themeToggleLabel">Automatisch</span></button><br>
+      <button class="theme-toggle" id="themeToggle" type="button">Darstellung: <span id="themeToggleLabel">Automatisch</span></button>
+      <details class="allergen-settings" id="allergenSettings">
+        <summary class="theme-toggle">Meine Allergene: <span id="allergenSummary">Alle</span></summary>
+        <div class="allergen-list" id="allergenList" role="group" aria-label="Meine Allergene"></div>
+        <span class="notify-hint">Nicht ausgewählte Pollen werden ausgegraut; die Gesamtbelastung zählt nur deine Auswahl.</span>
+      </details>
       <span id="notifySection"></span>
     </footer>
 
@@ -607,6 +635,7 @@
     history:        null, // last fetched by loadTrend(); null until it succeeds
     selectedPollen: null, // pollen key whose own history the trend section shows, or null for the overall trend
     rainByDate:     null, // { [date]: precipitation_sum in mm }, last fetched by loadData(); null until it succeeds
+    allergens:      null, // "Meine Allergene": array of POLLEN keys, or null = no filter (all pollens, the default)
   };
 
   let dwdCache = null;
@@ -1042,36 +1071,33 @@
     announce('Fehler beim Laden der Pollendaten: ' + msg);
   }
 
-  function render() {
-    if (!state.data?.length) return showError('Keine Daten verfügbar');
-    const dayData = state.data[state.selectedDay];
-    if (!dayData) return showError('Prognosedaten nicht verfügbar');
+  function isMine(pollenKey) {
+    return !state.allergens || state.allergens.includes(pollenKey);
+  }
 
-    // Overall level & dominant pollen
-    const overall = overallLevel(dayData.pollens);
+  // Overall level & dominant pollen for one day — only counting the
+  // user's own allergens once a "Meine Allergene" selection is active.
+  function daySummary(dayData) {
+    const overall = overallLevel(dayData.pollens, state.allergens);
 
     let dominant = null, domIdx = -1;
     for (const p of POLLEN) {
+      if (!isMine(p.key)) continue;
       const entry = dayData.pollens[p.key];
       if (!entry) continue;
       const idx = LEVELS.indexOf(entry.level);
       if (idx > domIdx) { domIdx = idx; dominant = p; }
     }
+    return { overall, dominant, domIdx };
+  }
 
-    // Glow
+  // Glow + hero only. Split out of render() so toggling an allergen can
+  // update these in place without rebuilding the pollen list below.
+  function renderHero(dayData) {
+    const { overall, dominant, domIdx } = daySummary(dayData);
+
     setGlow(overall);
 
-    // Sources & stand
-    const SOURCE_LABELS = { lgl: 'LGL Bayern ePIN', dwd: 'DWD', om: 'Open-Meteo' };
-    const usedSources = new Set();
-    for (const p of POLLEN) {
-      const src = dayData.pollens[p.key]?.source;
-      if (src) usedSources.add(src);
-    }
-    const sourceText = [...usedSources].map(s => SOURCE_LABELS[s] || s).join(' · ');
-    const standText  = fmtDataTimestamp(state.dataTimestamp);
-
-    // ── Hero ──
     const words = SUMMARY_DE[overall].split(' ');
     const heroHtml = words.slice(0, -1).join(' ') + '<br>' + words[words.length - 1];
     const dominantLabel = dominant && domIdx > 0
@@ -1094,7 +1120,7 @@
     summaryEl.style.display = 'block';
     summaryEl.innerHTML = `
       <div class="hero">
-        <div class="hero-eyebrow">Pollenbelastung</div>
+        <div class="hero-eyebrow">Pollenbelastung${state.allergens ? ' · Meine Allergene' : ''}</div>
         <div class="hero-level l-${overall}">${heroHtml}</div>
         <div class="hero-meta">
           <span>${fmtDate(dayData.date)}</span>
@@ -1103,6 +1129,28 @@
         </div>
         ${rainHtml}
       </div>`;
+
+    const dominantText = dominant && domIdx > 0 ? `, Hauptbelastung ${dominant.name}` : '';
+    const locName = document.getElementById('locationName').textContent || 'deinen Standort';
+    announce(`${SUMMARY_DE[overall]} für ${locName}${dominantText}`);
+  }
+
+  function render() {
+    if (!state.data?.length) return showError('Keine Daten verfügbar');
+    const dayData = state.data[state.selectedDay];
+    if (!dayData) return showError('Prognosedaten nicht verfügbar');
+
+    // Sources & stand
+    const SOURCE_LABELS = { lgl: 'LGL Bayern ePIN', dwd: 'DWD', om: 'Open-Meteo' };
+    const usedSources = new Set();
+    for (const p of POLLEN) {
+      const src = dayData.pollens[p.key]?.source;
+      if (src) usedSources.add(src);
+    }
+    const sourceText = [...usedSources].map(s => SOURCE_LABELS[s] || s).join(' · ');
+    const standText  = fmtDataTimestamp(state.dataTimestamp);
+
+    renderHero(dayData);
 
     // ── Pollen list ──
     const sortedPollen = [...POLLEN].sort((a, b) => {
@@ -1135,7 +1183,7 @@
       const entry = dayData.pollens[p.key];
       const isSelected = p.key === state.selectedPollen;
       const row = document.createElement('div');
-      row.className = `p-row l-${entry.level}` + (isSelected ? ' selected' : '');
+      row.className = `p-row l-${entry.level}` + (isSelected ? ' selected' : '') + (isMine(p.key) ? '' : ' not-mine');
       const disp = pollenDisplay(entry); // prefers K/m³ (Open-Meteo) over DWD's 0-3 scale — see pollen-logic.js
       row.style.setProperty('--pct', `${disp.pct ?? 0}%`);
       const valueHtml = `${disp.value}<span class="u">${disp.unit}</span>`;
@@ -1153,12 +1201,18 @@
       list.appendChild(row);
     }
 
+    // Each name gets its own element so applyAllergenFilter() can fade
+    // non-selected ones individually, same as the rows above.
+    const npItems = pollens => pollens
+      .map(p => `<span class="np-item${isMine(p.key) ? '' : ' not-mine'}" data-pollen="${p.key}">${p.name}</span>`)
+      .join(' · ');
+
     if (noFlightInSeason.length > 0) {
       const nf = document.createElement('div');
       nf.className = 'no-pollen';
       nf.innerHTML = `
         <span class="np-label">Kein Flug</span>
-        <span class="np-list">${noFlightInSeason.map(p => p.name).join(' · ')}</span>`;
+        <span class="np-list">${npItems(noFlightInSeason)}</span>`;
       list.appendChild(nf);
     }
 
@@ -1167,7 +1221,7 @@
       nf.className = 'no-pollen';
       nf.innerHTML = `
         <span class="np-label">Außerhalb der Saison</span>
-        <span class="np-list">${noFlightOutOfSeason.map(p => p.name).join(' · ')}</span>`;
+        <span class="np-list">${npItems(noFlightOutOfSeason)}</span>`;
       list.appendChild(nf);
     }
 
@@ -1183,14 +1237,15 @@
     shareBtn.className = 'share-btn';
     shareBtn.id = 'shareBtn';
     shareBtn.textContent = 'Teilen';
-    shareBtn.addEventListener('click', () => shareToday(dayData, overall, dominant, domIdx));
+    // Computed at click time, not captured here — the allergen selection
+    // can change after this render without rebuilding this button.
+    shareBtn.addEventListener('click', () => {
+      const { overall, dominant, domIdx } = daySummary(dayData);
+      shareToday(dayData, overall, dominant, domIdx);
+    });
     wrap.appendChild(shareBtn);
 
     document.getElementById('content').replaceChildren(wrap);
-
-    const dominantText = dominant && domIdx > 0 ? `, Hauptbelastung ${dominant.name}` : '';
-    const locName = document.getElementById('locationName').textContent || 'deinen Standort';
-    announce(`${SUMMARY_DE[overall]} für ${locName}${dominantText}`);
   }
 
   // Uses the Web Share API where available (incl. iOS Safari/PWA — this is
@@ -1473,6 +1528,76 @@
     applyTheme(next);
   });
 
+  // ─── Meine Allergene ─────────────────────────────────────────────────────────
+  // Stored as a JSON array of POLLEN keys. No saved value (the default) =
+  // no filter at all, so existing users see exactly what they saw before
+  // until they actively opt in. Selecting everything again also clears the
+  // key rather than saving a full list, so it's truly back to "no filter".
+  const ALLERGENS_KEY = 'pollenAllergens';
+
+  function loadAllergens() {
+    try {
+      const keys = JSON.parse(localStorage.getItem(ALLERGENS_KEY));
+      if (!Array.isArray(keys)) return null;
+      // localStorage is an external boundary — drop anything that isn't
+      // (or is no longer) a known pollen key.
+      const valid = POLLEN.map(p => p.key).filter(k => keys.includes(k));
+      return valid.length > 0 && valid.length < POLLEN.length ? valid : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveAllergens(keys) {
+    try {
+      if (keys) localStorage.setItem(ALLERGENS_KEY, JSON.stringify(keys));
+      else localStorage.removeItem(ALLERGENS_KEY);
+    } catch {}
+  }
+
+  function syncAllergenUI() {
+    const selected = state.allergens ?? POLLEN.map(p => p.key);
+    document.querySelectorAll('#allergenList input').forEach(input => {
+      input.checked = selected.includes(input.value);
+      // At least one has to stay selected — an empty selection would just
+      // be "no filter" again, which reads as the last tap being ignored.
+      input.disabled = input.checked && selected.length === 1;
+    });
+    const label = document.getElementById('allergenSummary');
+    if (label) label.textContent = state.allergens ? `${state.allergens.length} von ${POLLEN.length}` : 'Alle';
+  }
+
+  // Applies the current selection to what's already on screen: flips the
+  // not-mine class on existing list entries (no re-render, so no re-played
+  // row animations) and recomputes only the hero/glow from the new subset.
+  function applyAllergenFilter() {
+    document.querySelectorAll('#content [data-pollen]').forEach(el => {
+      el.classList.toggle('not-mine', !isMine(el.dataset.pollen));
+    });
+    const dayData = state.data?.[state.selectedDay];
+    if (dayData && document.querySelector('#content .pollen-list')) renderHero(dayData);
+  }
+
+  function initAllergens() {
+    state.allergens = loadAllergens();
+    const list = document.getElementById('allergenList');
+    if (!list) return;
+    for (const p of POLLEN) {
+      const label = document.createElement('label');
+      label.className = 'allergen-opt';
+      label.innerHTML = `<input type="checkbox" value="${p.key}"><span><span class="p-icon" aria-hidden="true">${p.icon}</span>${p.name}</span>`;
+      list.appendChild(label);
+    }
+    syncAllergenUI();
+    list.addEventListener('change', () => {
+      const keys = [...list.querySelectorAll('input:checked')].map(i => i.value);
+      state.allergens = keys.length > 0 && keys.length < POLLEN.length ? keys : null;
+      saveAllergens(state.allergens);
+      syncAllergenUI();
+      applyAllergenFilter();
+    });
+  }
+
   // ─── Push notifications ──────────────────────────────────────────────────────
   // iOS Safari only allows push subscriptions for a web app installed via
   // "Zum Home-Bildschirm hinzufügen" (iOS 16.4+) — a regular Safari tab
@@ -1569,6 +1694,7 @@
 
   renderDayTabs();
   initTheme();
+  initAllergens();
   initNotifyUI();
 
   const cached = loadCache();

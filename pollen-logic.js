@@ -100,8 +100,16 @@
   // Single source of truth for "what's the overall level for this day" —
   // was duplicated (slightly differently) between render() and
   // check-pollen.mjs; both now call this instead.
-  function overallLevel(pollens) {
-    return highestLevel(POLLEN.map((p) => pollens?.[p.key]?.level ?? 'none'));
+  // `keys` (optional): only consider these POLLEN keys — the user's own
+  // "Meine Allergene" selection in the app. Omitted/null = every pollen,
+  // exactly as before. An empty array really does mean "nothing selected"
+  // (-> 'none'); it's up to the caller to treat that as "no filter" if
+  // that's what it wants. Unknown keys are ignored.
+  function overallLevel(pollens, keys = null) {
+    const wanted = keys == null ? null : new Set(keys);
+    return highestLevel(POLLEN
+      .filter((p) => !wanted || wanted.has(p.key))
+      .map((p) => pollens?.[p.key]?.level ?? 'none'));
   }
 
   const MONTH_ABBR_DE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
