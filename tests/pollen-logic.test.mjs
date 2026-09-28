@@ -302,6 +302,33 @@ test('overallLevel: takes the highest level across all pollens, defaulting missi
   assert.equal(overallLevel(null), 'none');
 });
 
+test('overallLevel: no filter / null / undefined filter all behave exactly like before', () => {
+  const pollens = { grass: { level: 'medium' }, birch: { level: 'high' }, hazel: null };
+  assert.equal(overallLevel(pollens, undefined), 'high');
+  assert.equal(overallLevel(pollens, null), 'high');
+});
+
+test('overallLevel: with a key filter, only the selected pollens count', () => {
+  const pollens = { grass: { level: 'medium' }, birch: { level: 'very-high' }, ragweed: { level: 'low' } };
+  assert.equal(overallLevel(pollens, ['grass']), 'medium');         // birch is higher but not selected
+  assert.equal(overallLevel(pollens, ['grass', 'ragweed']), 'medium');
+  assert.equal(overallLevel(pollens, ['ragweed', 'birch']), 'very-high');
+  assert.equal(overallLevel(pollens, ['hazel']), 'none');           // selected pollen has no data
+});
+
+test('overallLevel: filter accepts any iterable (e.g. a Set) and ignores unknown keys', () => {
+  const pollens = { grass: { level: 'low' }, birch: { level: 'high' } };
+  assert.equal(overallLevel(pollens, new Set(['grass'])), 'low');
+  assert.equal(overallLevel(pollens, ['does-not-exist', 'grass']), 'low');
+  assert.equal(overallLevel(pollens, ['does-not-exist']), 'none');
+});
+
+test('overallLevel: an empty filter selects nothing -> none', () => {
+  const pollens = { birch: { level: 'high' } };
+  assert.equal(overallLevel(pollens, []), 'none');
+  assert.equal(overallLevel(null, ['birch']), 'none');
+});
+
 test('isInSeason: pollens outside their season window are correctly flagged', () => {
   // Birke: Apr – Mai
   assert.equal(isInSeason('birch', '2026-04-15'), true);
