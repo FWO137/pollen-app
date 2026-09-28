@@ -7,6 +7,8 @@ const {
   highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
   parseDwdVal, extractDWDDays, processOM, processLGL, buildDays, processWeather,
   pollenDisplay, diffTodayPollens, formatChangeNotification,
+  SYMPTOM_KEEP_DAYS, SYMPTOM_NOTE_MAX,
+  localDateStr, addDays, sanitizeSymptomEntries, pruneSymptomEntries, upsertSymptomEntry, mergeSymptomsWithHistory,
 } = PollenLogic;
 
 test('haversineKm: same point is 0', () => {
@@ -316,4 +318,140 @@ test('isInSeason: Ambrosia (Aug – Okt) matches the reported real-world scenari
 
 test('isInSeason: unknown pollen key or missing season data defaults to true (never falsely claims "out of season")', () => {
   assert.equal(isInSeason('does-not-exist', '2026-08-17'), true);
+});
+
+test('localDateStr: uses the local calendar date, not the UTC one', () => {
+  // 00:30 local is still the previous day in UTC for any timezone east of
+  // UTC (e.g. Europe/Berlin) — the local date must win.
+  assert.equal(localDateStr(new Date(2026, 8, 28, 0, 30)), '2026-09-28');
+  assert.equal(localDateStr(new Date(2026, 0, 5, 23, 59)), '2026-01-05');
+});
+
+test('addDays: crosses month/year boundaries and DST switches without skipping a date', () => {
+  assert.equal(addDays('2026-09-30', 1), '2026-10-01');
+  assert.equal(addDays('2026-01-01', -1), '2025-12-31');
+  assert.equal(addDays('2026-03-28', 1), '2026-03-29'); // DST starts 2026-03-29 in DE/AT
+  assert.equal(addDays('2026-03-29', 1), '2026-03-30');
+  assert.equal(addDays('2026-10-25', -1), '2026-10-24'); // DST ends 2026-10-25
+});
+
+test('sanitizeSymptomEntries: drops malformed entries, dedupes by date (last wins), sorts and trims notes', () => {
+  const raw = [
+    { date: '2026-09-27', severity: 'severe', note: '  Augen jucken  ' },
+    { date: '2026-09-25', severity: 'mild' },                    // missing note -> ''
+    { date: '2026-09-27', severity: 'moderate', note: 'später' }, // same day again -> replaces the first
+    { date: '2026-09-26', severity: 'terrible', note: 'x' },     // unknown severity
+    { date: '26.09.2026', severity: 'mild', note: '' },          // wrong date format
+    null,
+    'garbage',
+  ];
+  assert.deepEqual(sanitizeSymptomEntries(raw), [
+    { date: '2026-09-25', severity: 'mild', note: '' },
+    { date: '2026-09-27', severity: 'moderate', note: 'später' },
+  ]);
+});
+
+test('sanitizeSymptomEntries: non-array input (corrupt localStorage) returns an empty list instead of throwing', () => {
+  assert.deepEqual(sanitizeSymptomEntries(null), []);
+  assert.deepEqual(sanitizeSymptomEntries({ date: '2026-09-27', severity: 'mild' }), []);
+});
+
+test('sanitizeSymptomEntries: caps overly long notes at SYMPTOM_NOTE_MAX', () => {
+  const [e] = sanitizeSymptomEntries([{ date: '2026-09-27', severity: 'mild', note: 'a'.repeat(1000) }]);
+  assert.equal(e.note.length, SYMPTOM_NOTE_MAX);
+});
+
+test('upsertSymptomEntry: adds a new day and keeps the list sorted', () => {
+  const entries = [{ date: '2026-09-26', severity: 'mild', note: '' }];
+  const out = upsertSymptomEntry(entries, { date: '2026-09-28', severity: 'severe', note: 'Niesen' }, '2026-09-28');
+  assert.deepEqual(out.map((e) => e.date), ['2026-09-26', '2026-09-28']);
+  assert.equal(out[1].severity, 'severe');
+});
+
+test('upsertSymptomEntry: saving again on the same day edits that day\'s entry instead of adding a second one', () => {
+  const entries = [{ date: '2026-09-28', severity: 'mild', note: 'morgens' }];
+  const out = upsertSymptomEntry(entries, { date: '2026-09-28', severity: 'moderate', note: 'abends schlimmer' }, '2026-09-28');
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0], { date: '2026-09-28', severity: 'moderate', note: 'abends schlimmer' });
+});
+
+test('upsertSymptomEntry: prunes entries older than SYMPTOM_KEEP_DAYS when saving', () => {
+  const today = '2026-09-28';
+  const entries = [
+    { date: addDays(today, -SYMPTOM_KEEP_DAYS), severity: 'mild', note: '' },       // 91st day back -> dropped
+    { date: addDays(today, -(SYMPTOM_KEEP_DAYS - 1)), severity: 'mild', note: '' }, // exactly 90 days incl. today -> kept
+  ];
+  const out = upsertSymptomEntry(entries, { date: today, severity: 'none', note: '' }, today);
+  assert.deepEqual(out.map((e) => e.date), [addDays(today, -(SYMPTOM_KEEP_DAYS - 1)), today]);
+});
+
+test('upsertSymptomEntry: an invalid entry is ignored and the input list is never mutated', () => {
+  const entries = [{ date: '2026-09-27', severity: 'mild', note: '' }];
+  const snapshot = JSON.parse(JSON.stringify(entries));
+  const out = upsertSymptomEntry(entries, { date: '2026-09-28', severity: 'nope' }, '2026-09-28');
+  assert.deepEqual(out, snapshot);
+  upsertSymptomEntry(entries, { date: '2026-09-27', severity: 'severe', note: 'x' }, '2026-09-28');
+  assert.deepEqual(entries, snapshot);
+});
+
+test('pruneSymptomEntries: keeps exactly the last keepDays calendar days', () => {
+  const entries = [
+    { date: '2026-09-20', severity: 'mild', note: '' },
+    { date: '2026-09-21', severity: 'mild', note: '' },
+    { date: '2026-09-28', severity: 'mild', note: '' },
+  ];
+  assert.deepEqual(pruneSymptomEntries(entries, '2026-09-28', 8).map((e) => e.date), ['2026-09-21', '2026-09-28']);
+});
+
+test('mergeSymptomsWithHistory: lines up symptom entries with pollen history by date', () => {
+  const history = [
+    { date: '2026-09-26', overall: 'high', pollens: {} },
+    { date: '2026-09-27', overall: 'low', pollens: {} },
+  ];
+  const symptoms = [
+    { date: '2026-09-26', severity: 'severe', note: '' },
+    { date: '2026-09-28', severity: 'mild', note: '' }, // no history for today yet
+  ];
+  const rows = mergeSymptomsWithHistory(history, symptoms, '2026-09-28');
+  assert.deepEqual(rows.map((r) => r.date), ['2026-09-26', '2026-09-27', '2026-09-28']);
+  assert.equal(rows[0].pollen.overall, 'high');
+  assert.equal(rows[0].symptom.severity, 'severe');
+  assert.equal(rows[1].symptom, null); // history but no entry that day
+  assert.equal(rows[2].pollen, null);  // entry but no history that day
+  assert.equal(rows[2].symptom.severity, 'mild');
+});
+
+test('mergeSymptomsWithHistory: with no symptoms it is exactly the last `days` history entries (existing trend behavior)', () => {
+  const history = Array.from({ length: 10 }, (_, i) => ({ date: addDays('2026-08-01', i), overall: 'low', pollens: {} }));
+  const rows = mergeSymptomsWithHistory(history, [], '2026-09-28', 7);
+  assert.deepEqual(rows.map((r) => r.date), history.slice(-7).map((h) => h.date));
+  assert.ok(rows.every((r) => r.symptom === null));
+});
+
+test('mergeSymptomsWithHistory: no pollen history (not subscribed) still returns the symptom entries alone', () => {
+  const symptoms = [
+    { date: '2026-09-27', severity: 'moderate', note: '' },
+    { date: '2026-09-28', severity: 'none', note: '' },
+  ];
+  for (const history of [null, []]) {
+    const rows = mergeSymptomsWithHistory(history, symptoms, '2026-09-28');
+    assert.deepEqual(rows.map((r) => r.date), ['2026-09-27', '2026-09-28']);
+    assert.ok(rows.every((r) => r.pollen === null));
+    assert.equal(rows[0].symptom.severity, 'moderate');
+  }
+});
+
+test('mergeSymptomsWithHistory: ignores symptom entries outside the recent window (too old, or dated in the future)', () => {
+  const symptoms = [
+    { date: '2026-09-14', severity: 'severe', note: '' }, // 15 days back -> outside a 14-day window
+    { date: '2026-09-15', severity: 'mild', note: '' },   // 14th day back incl. today -> inside
+    { date: '2026-09-29', severity: 'mild', note: '' },   // tomorrow (device clock changed) -> ignored
+  ];
+  const rows = mergeSymptomsWithHistory(null, symptoms, '2026-09-28', 7, 14);
+  assert.deepEqual(rows.map((r) => r.date), ['2026-09-15']);
+});
+
+test('mergeSymptomsWithHistory: no data from either side -> empty list', () => {
+  assert.deepEqual(mergeSymptomsWithHistory(null, null, '2026-09-28'), []);
+  assert.deepEqual(mergeSymptomsWithHistory([], [], '2026-09-28'), []);
 });

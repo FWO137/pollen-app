@@ -379,10 +379,93 @@
     return { title, body };
   }
 
+  // ─── Symptom diary ───────────────────────────────────────────────────────────
+  // The user's own daily "how do I feel" entries, stored client-side only
+  // (localStorage in index.html) as a list of { date, severity, note }.
+  // Deliberately local-only for the MVP — no backend sync.
+  const SYMPTOM_LEVELS    = ['none', 'mild', 'moderate', 'severe'];
+  const SYMPTOM_LABELS_DE = { none: 'Kein Symptom', mild: 'Leicht', moderate: 'Mittel', severe: 'Stark' };
+  const SYMPTOM_KEEP_DAYS = 90;
+  const SYMPTOM_NOTE_MAX  = 280;
+
+  // "YYYY-MM-DD" in the device's *local* timezone. toISOString() is UTC,
+  // which in Germany/Austria is still "yesterday" until 01:00/02:00 local —
+  // an entry logged just after midnight would land on the wrong day.
+  function localDateStr(date = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  // Calendar-day arithmetic on "YYYY-MM-DD" strings. Done in UTC so a DST
+  // switch can't turn "+1 day" into 23 or 25 hours and skip/repeat a date.
+  function addDays(dateStr, n) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + n)).toISOString().split('T')[0];
+  }
+
+  // localStorage is an external boundary (older app versions, hand edits,
+  // another tab mid-write) — keep only well-formed entries, one per date
+  // (last one wins), sorted oldest first.
+  function sanitizeSymptomEntries(raw) {
+    if (!Array.isArray(raw)) return [];
+    const byDate = {};
+    for (const e of raw) {
+      if (typeof e?.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.date)) continue;
+      if (!SYMPTOM_LEVELS.includes(e.severity)) continue;
+      const note = typeof e.note === 'string' ? e.note.trim().slice(0, SYMPTOM_NOTE_MAX) : '';
+      byDate[e.date] = { date: e.date, severity: e.severity, note };
+    }
+    return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  // Keeps the last `keepDays` calendar days, today included.
+  function pruneSymptomEntries(entries, todayStr, keepDays = SYMPTOM_KEEP_DAYS) {
+    const cutoff = addDays(todayStr, -(keepDays - 1));
+    return entries.filter((e) => e.date >= cutoff);
+  }
+
+  // One entry per calendar day: saving again on the same day replaces that
+  // day's entry (that's how "edit today's entry" works). Returns a new
+  // list — never mutates `entries`. An invalid `entry` is ignored.
+  function upsertSymptomEntry(entries, entry, todayStr, keepDays = SYMPTOM_KEEP_DAYS) {
+    const [valid] = sanitizeSymptomEntries([entry]);
+    const rest = sanitizeSymptomEntries(entries).filter((e) => !valid || e.date !== valid.date);
+    const merged = valid ? sanitizeSymptomEntries([...rest, valid]) : rest;
+    return pruneSymptomEntries(merged, todayStr, keepDays);
+  }
+
+  // Lines up the user's symptom entries with the server-side pollen history
+  // (netlify/functions/history.mjs) by date, for the trend view. The date
+  // axis is the union of both sources' dates, last `days` of it — so it's
+  // exactly history.slice(-days) when there are no symptom entries (the
+  // trend view's existing behavior), and still works with symptoms alone
+  // when history is empty/null (no push subscription for this location).
+  // Symptom entries only count if they fall in the last `windowDays` up to
+  // today, so a months-old entry never shows up in a "recent" trend.
+  function mergeSymptomsWithHistory(history, symptoms, todayStr, days = 7, windowDays = 14) {
+    const windowStart = addDays(todayStr, -(windowDays - 1));
+    const histByDate = {};
+    for (const h of history ?? []) if (h?.date) histByDate[h.date] = h;
+    const symByDate = {};
+    for (const s of symptoms ?? []) {
+      if (s?.date && s.date >= windowStart && s.date <= todayStr) symByDate[s.date] = s;
+    }
+    const dates = [...new Set([...Object.keys(histByDate), ...Object.keys(symByDate)])]
+      .sort()
+      .slice(-days);
+    return dates.map((date) => ({
+      date,
+      pollen: histByDate[date] ?? null,
+      symptom: symByDate[date] ?? null,
+    }));
+  }
+
   return {
     LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM, RAIN_THRESHOLD_MM,
+    SYMPTOM_LEVELS, SYMPTOM_LABELS_DE, SYMPTOM_KEEP_DAYS, SYMPTOM_NOTE_MAX,
     highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
     parseDwdVal, extractDWDDays, processOM, processLGL, buildDays, processWeather,
     pollenDisplay, diffTodayPollens, formatChangeNotification,
+    localDateStr, addDays, sanitizeSymptomEntries, pruneSymptomEntries, upsertSymptomEntry, mergeSymptomsWithHistory,
   };
 });
