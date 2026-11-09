@@ -1,6 +1,6 @@
 import PollenLogic from '../../pollen-logic.js';
 
-const { POLLEN, extractDWDDays, processOM, processLGL, buildDays } = PollenLogic;
+const { POLLEN, extractDWDDays, processOM, processLGL, buildDays, nearestLglStation } = PollenLogic;
 
 const DWD_URL = 'https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json';
 const LGL_URL = 'https://epin.lgl.bayern.de/api/measurements';
@@ -32,7 +32,11 @@ async function fetchJson(url) {
 // plainly since nothing is blocking a user's screen).
 export async function fetchTodayPollens(location) {
   const { dateStr, referenceDate } = todayBerlin();
-  const { lat, lon, country, dwd, lgl } = location;
+  const { lat, lon, country, dwd } = location;
+  // Recomputed from the forecast coordinates. A stored `location.lgl` can
+  // be a station tens of kilometres from the point (old subscriptions, or
+  // a city whose nearest monitor isn't actually near).
+  const lglId = nearestLglStation(lat, lon)?.id ?? null;
 
   const omVars = POLLEN.filter((p) => p.om).map((p) => p.om).join(',');
   const omUrl = `https://air-quality-api.open-meteo.com/v1/air-quality`
@@ -44,8 +48,8 @@ export async function fetchTodayPollens(location) {
     ? fetchJson(DWD_URL).then((raw) => extractDWDDays(raw, dwd, referenceDate)).catch(() => null)
     : Promise.resolve(null);
 
-  const lglPromise = lgl
-    ? fetchJson(LGL_URL).then((raw) => processLGL(raw, lgl)).catch(() => null)
+  const lglPromise = lglId
+    ? fetchJson(LGL_URL).then((raw) => processLGL(raw, lglId)).catch(() => null)
     : Promise.resolve(null);
 
   const [omResult, dwdResult, lglResult] = await Promise.all([omPromise, dwdPromise, lglPromise]);

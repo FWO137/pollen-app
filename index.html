@@ -281,6 +281,18 @@
     }
     .rain-hint .ri { font-size: 14px; flex-shrink: 0; }
 
+    .geo-fail {
+      margin-bottom: 28px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--bdr);
+      font-size: 13px;
+      color: var(--t2);
+      line-height: 1.45;
+    }
+    .geo-fail p { margin-bottom: 8px; }
+    .geo-fail .share-btn { font-size: 13px; min-height: 44px; }
+
     /* ── Pollen list (built by JS into #content) ── */
     .list-head {
       font-size: 10px;
@@ -693,7 +705,7 @@
   // (loaded above, also covered by tests/pollen-logic.test.mjs).
   const {
     LOCATIONS, POLLEN, LEVELS, SUMMARY_DE, SNAP_MAX_KM, RAIN_THRESHOLD_MM,
-    overallLevel, isInSeason, fmtDate, fmtDataTimestamp, nearestLocation,
+    overallLevel, isInSeason, fmtDate, fmtDataTimestamp, nearestLocation, nearestLglStation,
     extractDWDDays, processOM, processLGL, buildDays, processWeather, pollenDisplay,
     SYMPTOM_LEVELS, SYMPTOM_LABELS_DE, SYMPTOM_NOTE_MAX,
     localDateStr, sanitizeSymptomEntries, upsertSymptomEntry, mergeSymptomsWithHistory,
@@ -702,6 +714,8 @@
   // ─── State ───────────────────────────────────────────────────────────────────
   const state = {
     locationKey:    'munich',
+    locationSource: 'gps', // 'manual' keeps a picked city; 'gps' may refresh the fix in the background
+    lglStationName: null,  // ePIN monitor actually used for this forecast point, for the source line
     selectedDay:    0,
     data:           null,
     customCoords:   null,
@@ -741,10 +755,16 @@
 
   // ─── DWD API ─────────────────────────────────────────────────────────────────
   const DWD_URL = 'https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json';
+  // Same-origin proxies (netlify _redirects) on any hosted page, including a
+  // custom domain and the local e2e server. The public CORS proxy is only
+  // a last resort for file://, where those redirects don't exist.
+  function proxiedUrl(path, absoluteUrl) {
+    return (location.protocol === 'http:' || location.protocol === 'https:')
+      ? path
+      : `https://cors.eu.org/${absoluteUrl}`;
+  }
   function dwdFetchUrl() {
-    return location.hostname.endsWith('.netlify.app') || location.hostname.endsWith('.netlify.com')
-      ? '/dwd-api'
-      : `https://cors.eu.org/${DWD_URL}`;
+    return proxiedUrl('/dwd-api', DWD_URL);
   }
 
   async function fetchDWD() {
@@ -822,9 +842,7 @@
   // ─── LGL Bayern ePIN API ─────────────────────────────────────────────────────
   const LGL_URL = 'https://epin.lgl.bayern.de/api/measurements';
   function lglFetchUrl() {
-    return location.hostname.endsWith('.netlify.app') || location.hostname.endsWith('.netlify.com')
-      ? '/lgl-api'
-      : `https://cors.eu.org/${LGL_URL}`;
+    return proxiedUrl('/lgl-api', LGL_URL);
   }
 
   async function fetchLGL() {
@@ -854,6 +872,11 @@
       if (!c.customCoords && !LOCATIONS[c.locationKey]) {
         c.locationKey = 'munich';
       }
+      // Caches written before locationSource existed: a saved GPS fix has
+      // coordinates, a picked city does not.
+      if (c.locationSource !== 'manual' && c.locationSource !== 'gps') {
+        c.locationSource = c.customCoords ? 'gps' : 'manual';
+      }
       return c;
     } catch {
       return null;
@@ -863,8 +886,9 @@
   function saveCache(locationName) {
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify({
-        locationKey:   state.locationKey,
-        customCoords:  state.customCoords,
+        locationKey:    state.locationKey,
+        locationSource: state.locationSource,
+        customCoords:   state.customCoords,
         data:          state.data,
         dataTimestamp: state.dataTimestamp,
         locationName,
@@ -914,22 +938,31 @@
   // the location currently being displayed, snap-distance guard included.
   function currentLoc() {
     const snapped = LOCATIONS[state.locationKey];
+    const lat = state.customCoords?.lat ?? snapped?.lat;
+    const lon = state.customCoords?.lon ?? snapped?.lon;
+    if (lat == null || lon == null) return snapped;
     const tooFar = state.snapDistanceKm != null && state.snapDistanceKm > SNAP_MAX_KM;
-    return state.customCoords
-      ? {
-          lat: state.customCoords.lat,
-          lon: state.customCoords.lon,
-          country: snapped?.country ?? 'DE',
-          dwd: tooFar ? null : snapped?.dwd ?? null,
-          lgl: tooFar ? null : snapped?.lgl ?? null,
-        }
-      : snapped;
+    // ePIN only if a monitor is actually near this point. The city table's
+    // lgl id is not consulted — several of those pairings are 50–70 km off.
+    const station = nearestLglStation(lat, lon);
+    const lgl = station?.id ?? null;
+    const lglName = station?.name ?? null;
+    if (state.customCoords) {
+      return {
+        lat, lon,
+        country: snapped?.country ?? 'DE',
+        dwd: tooFar ? null : snapped?.dwd ?? null,
+        lgl, lglName,
+      };
+    }
+    return { ...snapped, lgl, lglName };
   }
 
   async function loadData({ silent = false } = {}) {
     const seq = ++loadSeq;
     if (!silent) showLoading();
     const loc = currentLoc();
+    state.lglStationName = loc?.lglName ?? null;
 
     try {
       let dwdDays = null, omDays = null, lglToday = null, dataTimestamp = null;
@@ -1042,10 +1075,13 @@
       if (e.target.closest('#retryGeoBtn')) { requestGeo(); return; }
       const pill = e.target.closest('.picker-pill');
       if (!pill) return;
-      state.locationKey  = pill.dataset.key;
-      state.customCoords = null;
+      state.locationKey    = pill.dataset.key;
+      state.locationSource = 'manual';
+      state.customCoords   = null;
+      state.snapDistanceKm = null;
       document.getElementById('locationName').textContent = LOCATIONS[pill.dataset.key].name;
       loadData();
+      syncPushSubscription();
     });
   }
 
@@ -1068,19 +1104,44 @@
   // and overwrite the newer fix's name.
   let realNameSeq = 0;
 
+  // Shown when a refresh can't get a fix but a forecast is already on screen.
+  // Replacing that forecast with the full city picker made a failed GPS
+  // attempt look like the data had been lost. The picker is one tap away.
+  function showKeptViewGeoFailure(permissionDenied) {
+    const message = permissionDenied
+      ? 'Standortzugriff nicht erlaubt. Die letzte Ansicht bleibt erhalten.'
+      : 'Standort konnte gerade nicht ermittelt werden. Die letzte Ansicht bleibt erhalten.';
+    announce(message);
+    document.getElementById('geoFailBanner')?.remove();
+    const banner = document.createElement('div');
+    banner.id = 'geoFailBanner';
+    banner.className = 'geo-fail';
+    const text = document.createElement('p');
+    text.textContent = message;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'share-btn';
+    btn.id = 'openPickerBtn';
+    btn.textContent = 'Anderen Ort wählen';
+    btn.addEventListener('click', () => showLocationPicker(permissionDenied));
+    banner.append(text, btn);
+    document.getElementById('content').prepend(banner);
+  }
+
   function requestGeo({ background = false } = {}) {
     const btn    = document.getElementById('geoBtn');
     const nameEl = document.getElementById('locationName');
+    const keepView = !!state.data;
 
     if (!navigator.geolocation) {
-      if (!background) {
-        showLocationPicker(false, 'navigator.geolocation nicht verfügbar (kein HTTPS oder nicht unterstützt).');
-      }
+      if (background) return;
+      if (keepView) { showKeptViewGeoFailure(false); return; }
+      showLocationPicker(false, 'navigator.geolocation nicht verfügbar (kein HTTPS oder nicht unterstützt).');
       return;
     }
 
     btn.classList.add('loading');
-    if (!background) {
+    if (!background && !keepView) {
       nameEl.textContent = 'Standort wird ermittelt …';
       showLoading();
     }
@@ -1088,6 +1149,7 @@
     const onSuccess = ({ coords }) => {
       btn.classList.remove('loading');
       const { key: nearest, distanceKm } = nearestLocation(coords.latitude, coords.longitude);
+      state.locationSource = 'gps';
       state.locationKey    = nearest;
       state.customCoords   = { lat: coords.latitude, lon: coords.longitude };
       state.snapDistanceKm = distanceKm;
@@ -1096,12 +1158,14 @@
       // resolves (or left in place if that fails).
       nameEl.textContent = locationLabel(nearest, distanceKm);
       loadData({ silent: background && !!state.data });
+      syncPushSubscription();
 
       const seq = ++realNameSeq;
       reverseGeocode(coords.latitude, coords.longitude).then((name) => {
         if (seq !== realNameSeq || !name) return; // superseded by a newer fix, or lookup failed
         nameEl.textContent = name;
         if (state.data) saveCache(name);
+        syncPushSubscription();
       });
     };
 
@@ -1114,6 +1178,10 @@
         return;
       }
       console.error('Geolocation error', err.code, err.message);
+      if (state.data) {
+        showKeptViewGeoFailure(err.code === 1);
+        return;
+      }
       const info = `Code ${err.code} (${ERR_NAMES[err.code] || 'unbekannt'})${err.message ? ' – ' + err.message : ''}`;
       showLocationPicker(err.code === 1, info);
     };
@@ -1245,7 +1313,11 @@
     if (!dayData) return showError('Prognosedaten nicht verfügbar');
 
     // Sources & stand
-    const SOURCE_LABELS = { lgl: 'LGL Bayern ePIN', dwd: 'DWD', om: 'Open-Meteo' };
+    const SOURCE_LABELS = {
+      lgl: state.lglStationName ? `LGL Bayern ePIN (${state.lglStationName})` : 'LGL Bayern ePIN',
+      dwd: 'DWD',
+      om: 'Open-Meteo',
+    };
     const usedSources = new Set();
     for (const p of POLLEN) {
       const src = dayData.pollens[p.key]?.source;
@@ -1297,7 +1369,7 @@
       const isSelected = p.key === state.selectedPollen;
       const row = document.createElement('div');
       row.className = `p-row l-${entry.level}` + (isSelected ? ' selected' : '') + (isMine(p.key) ? '' : ' not-mine');
-      const disp = pollenDisplay(entry); // prefers K/m³ (Open-Meteo) over DWD's 0-3 scale — see pollen-logic.js
+      const disp = pollenDisplay(entry); // same source as entry.level — see pollenDisplay()
       row.style.setProperty('--pct', `${disp.pct ?? 0}%`);
       const valueHtml = `${disp.value}<span class="u">${disp.unit}</span>`;
       row.innerHTML = `
@@ -1679,8 +1751,8 @@
   document.getElementById('geoBtn').addEventListener('click', () => {
     dwdCache = null;
     lglCache = null;
-    state.data = null;
-    state.dataTimestamp = null;
+    // Keep state.data until the fix actually succeeds. Clearing it first
+    // used to wipe a good forecast when geolocation then failed.
     requestGeo();
   });
 
@@ -1852,6 +1924,7 @@
       saveAllergens(state.allergens);
       syncAllergenUI();
       applyAllergenFilter();
+      syncPushSubscription();
     });
   }
 
@@ -1876,6 +1949,50 @@
 
   function pushSupported() {
     return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  }
+
+  // Skips the POST when the location, its name and the allergen filter
+  // haven't changed since the last successful write this page-load.
+  let lastPushSyncKey = '';
+
+  function locationSyncKey() {
+    const loc = currentLoc();
+    if (!loc || !Number.isFinite(loc.lat) || !Number.isFinite(loc.lon)) return '';
+    const name = document.getElementById('locationName')?.textContent ?? '';
+    const allergens = state.allergens ? state.allergens.join(',') : '*';
+    return `${loc.lat.toFixed(2)},${loc.lon.toFixed(2)}|${loc.dwd ?? ''}|${loc.lgl ?? ''}|${name}|${allergens}`;
+  }
+
+  async function postSubscription(sub) {
+    const res = await fetch('/.netlify/functions/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subscription: sub.toJSON(),
+        location: currentLoc(),
+        locationName: document.getElementById('locationName').textContent,
+        allergens: state.allergens,
+      }),
+    });
+    if (!res.ok) throw new Error('subscribe ' + res.status);
+    lastPushSyncKey = locationSyncKey();
+    return res;
+  }
+
+  // Updates the server copy after a location or allergen change. No-op
+  // until the user has actually subscribed, and never prompts for permission.
+  async function syncPushSubscription() {
+    try {
+      if (!pushSupported() || !isStandalone()) return;
+      const key = locationSyncKey();
+      if (!key || key === lastPushSyncKey) return;
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) return;
+      await postSubscription(sub);
+    } catch (err) {
+      console.error('push resubscribe failed', err);
+    }
   }
 
   async function initNotifyUI() {
@@ -1912,9 +2029,11 @@
         if (currentSub) {
           await fetch('/.netlify/functions/unsubscribe', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ endpoint: currentSub.endpoint }),
           }).catch(() => {});
           await currentSub.unsubscribe();
+          lastPushSyncKey = '';
         } else {
           const permission = await Notification.requestPermission();
           if (permission !== 'granted') return;
@@ -1922,14 +2041,14 @@
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
           });
-          await fetch('/.netlify/functions/subscribe', {
-            method: 'POST',
-            body: JSON.stringify({
-              subscription: sub.toJSON(),
-              location: currentLoc(),
-              locationName: document.getElementById('locationName').textContent,
-            }),
-          });
+          try {
+            await postSubscription(sub);
+          } catch (err) {
+            // Server never stored it — don't leave a local subscription
+            // that makes the button say "deaktivieren".
+            await sub.unsubscribe().catch(() => {});
+            throw err;
+          }
         }
       } catch (err) {
         console.error('notification toggle failed', err);
@@ -1957,16 +2076,19 @@
 
   const cached = loadCache();
   if (cached) {
-    state.locationKey   = cached.locationKey ?? state.locationKey;
-    state.customCoords  = cached.customCoords ?? null;
-    state.data          = cached.data;
-    state.dataTimestamp = cached.dataTimestamp ?? null;
+    state.locationKey    = cached.locationKey ?? state.locationKey;
+    state.locationSource = cached.locationSource;
+    state.customCoords   = cached.customCoords ?? null;
+    state.data           = cached.data;
+    state.dataTimestamp  = cached.dataTimestamp ?? null;
+    state.lglStationName = currentLoc()?.lglName ?? null;
     document.getElementById('locationName').textContent =
       cached.locationName || LOCATIONS[state.locationKey]?.name || 'Standort';
     renderDayTabs();
     render();
     loadTrend();
-    requestGeo({ background: true });
+    if (state.locationSource === 'gps') requestGeo({ background: true });
+    else loadData({ silent: true });
   } else {
     requestGeo();
   }

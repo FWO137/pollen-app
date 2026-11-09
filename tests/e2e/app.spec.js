@@ -100,6 +100,7 @@ test.describe('refresh race condition', () => {
     await page.addInitScript((keys) => {
       localStorage.setItem('pollenCacheV1', JSON.stringify({
         locationKey: 'munich',
+        locationSource: 'gps',
         customCoords: null,
         data: [0, 1, 2].map((i) => ({
           date: `2026-08-0${9 + i}`,
@@ -535,5 +536,92 @@ test.describe('rain hint', () => {
     await expect(page.locator('.pollen-list')).toBeVisible();
     await page.waitForTimeout(400);
     await expect(page.locator('.rain-hint')).toHaveCount(0);
+  });
+});
+
+test.describe('manual location and a failed GPS refresh', () => {
+  const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [9], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+
+  test('a manually chosen city survives the next visit even if GPS would say somewhere else', async ({ page }) => {
+    const pollenKeys = ['hazel', 'alder', 'ash', 'birch', 'plane', 'olive', 'grass', 'rye', 'mugwort', 'ragweed'];
+    await page.addInitScript((keys) => {
+      window.__geoCalls = 0;
+      navigator.geolocation.getCurrentPosition = () => { window.__geoCalls += 1; };
+      localStorage.setItem('pollenCacheV1', JSON.stringify({
+        locationKey: 'vienna',
+        locationSource: 'manual',
+        customCoords: null,
+        data: [0, 1, 2].map((i) => ({
+          date: `2026-08-1${7 + i}`,
+          pollens: Object.fromEntries(keys.map((k) => [k, null])),
+        })),
+        dataTimestamp: null,
+        locationName: 'Wien',
+        savedAt: Date.now(),
+      }));
+    }, pollenKeys);
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('#locationName')).toHaveText('Wien');
+    await page.waitForTimeout(400);
+    await expect(page.locator('#locationName')).toHaveText('Wien');
+    expect(await page.evaluate(() => window.__geoCalls)).toBe(0);
+  });
+
+  test('a failed refresh keeps the forecast and still offers another city', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/lgl-api', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+    await page.route('**/api.open-meteo.com/v1/forecast**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: ['2026-08-17'], precipitation_sum: [0] } }) }));
+    await page.route('**/nominatim.openstreetmap.org/**', (route) => route.abort());
+
+    await page.goto('/');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('#locationName')).toHaveText('München');
+
+    await page.evaluate(() => {
+      navigator.geolocation.getCurrentPosition = (_success, error) => {
+        error({ code: 1, message: 'denied' });
+      };
+    });
+    await page.click('#geoBtn');
+
+    await expect(page.locator('.pollen-list')).toBeVisible();
+    await expect(page.locator('.location-picker')).toHaveCount(0);
+    await expect(page.locator('#geoFailBanner')).toContainText('letzte Ansicht bleibt erhalten');
+    await expect(page.locator('#locationName')).toHaveText('München');
+
+    await page.click('#openPickerBtn');
+    await expect(page.locator('.location-picker')).toBeVisible();
+    await page.locator('.picker-pill', { hasText: 'Wien' }).click();
+    await expect(page.locator('#locationName')).toHaveText('Wien');
+    await expect(page.locator('.pollen-list')).toBeVisible();
+  });
+
+  test('a nearby ePIN station is named, and its reading is the number on the row', async ({ page }) => {
+    await stubMunichGeolocation(page);
+    // Open-Meteo would call this medium / 45. ePIN's own scale calls 180 high.
+    // The row must follow ePIN for both, not mix them.
+    const om = { hourly: { time: ['2026-08-17T00:00'], grass_pollen: [45], alder_pollen: [0], birch_pollen: [0], mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0] } };
+    const lgl = { measurements: [{ location: 'DEMUNC', polle: 'Poaceae', data: [{ value: 180, to: 1700000000 }] }] };
+    await page.route('**/air-quality-api.open-meteo.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(om) }));
+    await page.route('**/lgl-api', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(lgl) }));
+    await page.route('**/dwd-api', (route) => route.abort());
+    await page.route('**/nominatim.openstreetmap.org/**', (route) => route.abort());
+    await page.route('**/.netlify/functions/history**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ history: [] }) }));
+
+    await page.goto('/');
+    const grass = page.locator('.p-row[data-pollen="grass"]');
+    await expect(grass).toBeVisible();
+    await expect(grass).toHaveClass(/l-high/);
+    await expect(grass.locator('.p-val')).toContainText('180');
+    await expect(page.locator('.stand-line')).toContainText('LGL Bayern ePIN (München)');
   });
 });

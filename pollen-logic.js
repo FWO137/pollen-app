@@ -86,10 +86,32 @@
   const LEVELS      = ['none', 'low', 'medium', 'high', 'very-high'];
   const SUMMARY_DE  = { none: 'Kaum Belastung', low: 'Geringe Belastung', medium: 'Mittlere Belastung', high: 'Hohe Belastung', 'very-high': 'Sehr hohe Belastung' };
 
-  // Beyond this distance (km) from the nearest known city, its DWD region /
-  // LGL station is no longer a reasonable stand-in — fall back to
-  // Open-Meteo with the real coordinates instead of misattributing data.
+  // Beyond this distance (km) from the nearest known city, its DWD region
+  // is no longer a reasonable stand-in — fall back to Open-Meteo with the
+  // real coordinates instead of misattributing a regional forecast.
   const SNAP_MAX_KM = 80;
+
+  // ePIN monitors, coordinates from the published network table
+  // (Oteros et al., the 8 electronic sites still served by
+  // epin.lgl.bayern.de/api/measurements). Names are what we show in the
+  // source line. A station is only used when the forecast point is within
+  // LGL_MAX_KM of it — city-to-station, or the user's own fix when we have
+  // GPS. 30 km keeps the monitors that actually sit on a covered anchor
+  // (München 1.7, Feucht/Nürnberg 12, Altötting/Pfarrkirchen 29.5) and drops
+  // the mis-assigned ones (Mindelheim is 47 km from Augsburg and 55 from Ulm,
+  // Viechtach 57 from Regensburg, München 70 from Ingolstadt). 35 km would
+  // also pull Garmisch onto Innsbruck (33.6), which is the wrong airshed.
+  const LGL_MAX_KM = 30;
+  const LGL_STATIONS = {
+    DEALTO: { name: 'Altötting',              lat: 48.23, lon: 12.68 },
+    DEFEUC: { name: 'Feucht',                 lat: 49.38, lon: 11.20 },
+    DEGARM: { name: 'Garmisch-Partenkirchen', lat: 47.49, lon: 11.10 },
+    DEHOF:  { name: 'Hof',                    lat: 50.32, lon: 11.90 },
+    DEMARK: { name: 'Marktheidenfeld',        lat: 49.85, lon:  9.63 },
+    DEMIND: { name: 'Mindelheim',             lat: 48.04, lon: 10.50 },
+    DEMUNC: { name: 'München',                lat: 48.13, lon: 11.56 },
+    DEVIEC: { name: 'Viechtach',              lat: 49.08, lon: 12.87 },
+  };
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   function highestLevel(levels) {
@@ -169,6 +191,37 @@
       if (d < distanceKm) { distanceKm = d; key = k; }
     }
     return { key, distanceKm };
+  }
+
+  // Closest ePIN monitor to a forecast point, or null when none is close
+  // enough to stand in for that point. Ignores the city→station id stored
+  // on LOCATIONS — that table hard-coded Ingolstadt to the Munich trap
+  // (~70 km) and similar mismatches. Callers should pass the coordinates
+  // actually being forecast (GPS fix, or the anchor city when the user
+  // picked one).
+  function nearestLglStation(lat, lon) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    let best = null;
+    for (const [id, station] of Object.entries(LGL_STATIONS)) {
+      const distanceKm = haversineKm(lat, lon, station.lat, station.lon);
+      if (!best || distanceKm < best.distanceKm) {
+        best = { id, name: station.name, distanceKm };
+      }
+    }
+    return best && best.distanceKm <= LGL_MAX_KM ? best : null;
+  }
+
+  // "Meine Allergene" as stored on a push subscription. null = no filter
+  // (every pollen), matching the client's localStorage rule: an empty
+  // selection or a selection of every pollen is the same as no filter.
+  // Unknown keys are dropped. Not an array (missing field on old
+  // subscriptions included) → null.
+  function normalizeAllergenKeys(raw) {
+    if (!Array.isArray(raw)) return null;
+    const wanted = new Set(raw.filter((k) => typeof k === 'string'));
+    const valid = POLLEN.map((p) => p.key).filter((k) => wanted.has(k));
+    if (valid.length === 0 || valid.length === POLLEN.length) return null;
+    return valid;
   }
 
   // ─── DWD ─────────────────────────────────────────────────────────────────────
@@ -311,20 +364,14 @@
       const date = dwdDays?.[i]?.date ?? omDays?.[i]?.date;
       const pollens = {};
       for (const p of POLLEN) {
+        // One source owns the whole entry: level, number and bar. Mixing
+        // DWD's 0–3 stage with Open-Meteo's grains/m³ made the colour say
+        // one thing and the figure another. Priority is unchanged
+        // (ePIN measurement, then DWD region, then Open-Meteo).
         if (lgl?.[p.key] != null) {
           pollens[p.key] = lgl[p.key];
         } else if (dwd?.[p.key] != null) {
-          const entry = { ...dwd[p.key] };
-          // DWD only reports a 0-3 severity code, not a real concentration.
-          // When Open-Meteo also covers this pollen, carry its K/m³ figure
-          // (and matching bar-fill %) along so the UI can show one
-          // consistent unit instead of "X / 3" on some days and "K/m³" on
-          // others depending on which source happened to answer that day.
-          if (om?.[p.key]) {
-            entry.omDisplay = om[p.key].display;
-            entry.omPct = om[p.key].pct;
-          }
-          pollens[p.key] = entry;
+          pollens[p.key] = dwd[p.key];
         } else if (om?.[p.key] != null) {
           pollens[p.key] = om[p.key];
         } else {
@@ -335,40 +382,40 @@
     });
   }
 
-  // Single source of truth for "what number/unit does this pollen entry
-  // actually show" — prefers the real K/m³ concentration (Open-Meteo) over
-  // DWD's 0-3 severity code whenever one is available. Used both by the
-  // app's own render() and by the change-notification diffing below, so
-  // the two can never disagree about what counts as "the displayed value".
+  // Number, unit and bar for one pollen entry. Always the entry's own
+  // source — a legacy `omDisplay` left on a cached DWD row is ignored, so
+  // colour (entry.level) and the figure can't come from different APIs.
   function pollenDisplay(entry) {
-    if (!entry) return null;
-    if (entry.omDisplay != null) return { value: entry.omDisplay, unit: 'K/m³', pct: entry.omPct ?? entry.pct };
+    if (!entry || entry.display == null) return null;
     return { value: entry.display, unit: entry.unit, pct: entry.pct };
   }
 
-  // Compares "today"'s pollens object between two points in time and
-  // returns one entry per pollen whose severity level or displayed
-  // value/unit changed. Used by the scheduled push-notification check.
-  function diffTodayPollens(prevPollens, currPollens) {
+  // Level increases only, for the scheduled push. A grains/m³ wiggle inside
+  // the same bucket is not a change, and a drop isn't either — those used
+  // to notify on every 2-hour run. `keys` (null = all) is the subscriber's
+  // allergen filter. `skipKeys` are pollens already notified today.
+  function diffTodayPollens(prevPollens, currPollens, { keys = null, skipKeys = null } = {}) {
+    const wanted = keys == null ? null : new Set(keys);
+    const skip = new Set(skipKeys ?? []);
     const changes = [];
     for (const p of POLLEN) {
+      if (wanted && !wanted.has(p.key)) continue;
+      if (skip.has(p.key)) continue;
       const prevEntry = prevPollens?.[p.key] ?? null;
       const currEntry = currPollens?.[p.key] ?? null;
       const prevLevel = prevEntry?.level ?? 'none';
       const currLevel = currEntry?.level ?? 'none';
+      // Unknown labels sit at -1 and therefore never count as an increase.
+      if (LEVELS.indexOf(currLevel) <= LEVELS.indexOf(prevLevel)) continue;
       const prevD = pollenDisplay(prevEntry);
       const currD = pollenDisplay(currEntry);
-      const prevKey = prevD ? `${prevD.value} ${prevD.unit}` : null;
-      const currKey = currD ? `${currD.value} ${currD.unit}` : null;
-      if (prevLevel !== currLevel || prevKey !== currKey) {
-        changes.push({
-          key: p.key,
-          name: p.name,
-          prevLevel, currLevel,
-          prevValue: prevKey,
-          currValue: currKey,
-        });
-      }
+      changes.push({
+        key: p.key,
+        name: p.name,
+        prevLevel, currLevel,
+        prevValue: prevD ? `${prevD.value} ${prevD.unit}` : null,
+        currValue: currD ? `${currD.value} ${currD.unit}` : null,
+      });
     }
     return changes;
   }
@@ -469,9 +516,9 @@
   }
 
   return {
-    LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM, RAIN_THRESHOLD_MM,
+    LOCATIONS, POLLEN, LGL_MAP, LGL_THR, OM_THR, DWD_MAP, LEVELS, SUMMARY_DE, SNAP_MAX_KM, LGL_MAX_KM, LGL_STATIONS, RAIN_THRESHOLD_MM,
     SYMPTOM_LEVELS, SYMPTOM_LABELS_DE, SYMPTOM_KEEP_DAYS, SYMPTOM_NOTE_MAX,
-    highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
+    highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation, nearestLglStation, normalizeAllergenKeys,
     parseDwdVal, extractDWDDays, processOM, processLGL, buildDays, processWeather,
     pollenDisplay, diffTodayPollens, formatChangeNotification,
     localDateStr, addDays, sanitizeSymptomEntries, pruneSymptomEntries, upsertSymptomEntry, mergeSymptomsWithHistory,

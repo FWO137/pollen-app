@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import PollenLogic from '../pollen-logic.js';
 
 const {
-  LOCATIONS, LEVELS, SNAP_MAX_KM,
-  highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation,
+  LOCATIONS, LEVELS, SNAP_MAX_KM, LGL_MAX_KM,
+  highestLevel, overallLevel, isInSeason, fmtDate, fmtDataTimestamp, haversineKm, nearestLocation, nearestLglStation, normalizeAllergenKeys,
   parseDwdVal, extractDWDDays, processOM, processLGL, buildDays, processWeather,
   pollenDisplay, diffTodayPollens, formatChangeNotification,
   SYMPTOM_KEEP_DAYS, SYMPTOM_NOTE_MAX,
@@ -29,6 +29,37 @@ test('nearestLocation: snaps to the closest known city', () => {
 test('nearestLocation: a distant point (Berlin) still returns something, but far beyond SNAP_MAX_KM', () => {
   const { distanceKm } = nearestLocation(52.52, 13.405);
   assert.ok(distanceKm > SNAP_MAX_KM, 'Berlin should exceed the snap threshold from every listed city');
+});
+
+test('nearestLglStation: only monitors within 30 km of the forecast point', () => {
+  const munich = nearestLglStation(LOCATIONS.munich.lat, LOCATIONS.munich.lon);
+  assert.equal(munich.id, 'DEMUNC');
+  assert.equal(munich.name, 'München');
+  assert.ok(munich.distanceKm <= LGL_MAX_KM);
+
+  const nuremberg = nearestLglStation(LOCATIONS.nuremberg.lat, LOCATIONS.nuremberg.lon);
+  assert.equal(nuremberg.id, 'DEFEUC');
+  assert.equal(nuremberg.name, 'Feucht');
+
+  // 29.5 km — the Altötting monitor still covers this anchor.
+  const pfarrkirchen = nearestLglStation(LOCATIONS.pfarrkirchen.lat, LOCATIONS.pfarrkirchen.lon);
+  assert.equal(pfarrkirchen.id, 'DEALTO');
+  assert.equal(pfarrkirchen.name, 'Altötting');
+
+  // These cities used to inherit a monitor 47–70 km away.
+  for (const key of ['augsburg', 'ingolstadt', 'regensburg', 'ulm', 'innsbruck']) {
+    assert.equal(nearestLglStation(LOCATIONS[key].lat, LOCATIONS[key].lon), null, key);
+  }
+  assert.equal(nearestLglStation(Number.NaN, 11), null);
+});
+
+test('normalizeAllergenKeys: null means every pollen, unknown keys are dropped', () => {
+  assert.equal(normalizeAllergenKeys(undefined), null);
+  assert.equal(normalizeAllergenKeys('birch'), null);
+  assert.equal(normalizeAllergenKeys([]), null);
+  assert.equal(normalizeAllergenKeys(['nope']), null);
+  assert.deepEqual(normalizeAllergenKeys(['grass', 'nope', 'grass', 'birch']), ['birch', 'grass']);
+  assert.equal(normalizeAllergenKeys(['hazel', 'alder', 'ash', 'birch', 'plane', 'olive', 'grass', 'rye', 'mugwort', 'ragweed']), null);
 });
 
 test('nearestLocation: covers every configured location without throwing', () => {
@@ -204,22 +235,27 @@ test('buildDays: LGL takes priority over DWD, DWD over Open-Meteo', () => {
   assert.equal(days[0].pollens.hazel, null);               // no data anywhere
 });
 
-test('buildDays: DWD entries get an omDisplay/omPct hint when Open-Meteo also has data', () => {
-  const dwdDays = [{ date: '2026-08-09', dwd: { birch: { level: 'low', source: 'dwd' } } }];
-  const omDays  = [{ date: '2026-08-09', om: { birch: { level: 'high', source: 'om', display: '77', pct: 92 } } }];
+test('buildDays: a DWD row keeps its own level and scale when Open-Meteo disagrees', () => {
+  // Colour, number and bar have to describe the same source. DWD says low
+  // (1 / 3); Open-Meteo would have said high — the DWD entry wins whole.
+  const dwdDays = [{ date: '2026-08-09', dwd: { birch: { level: 'low', display: '1', unit: '/ 3', pct: 33, source: 'dwd' } } }];
+  const omDays  = [{ date: '2026-08-09', om: { birch: { level: 'high', display: '77', unit: 'K/m³', pct: 92, source: 'om' } } }];
   const days = buildDays(dwdDays, omDays, null);
-  assert.equal(days[0].pollens.birch.omDisplay, '77');
-  assert.equal(days[0].pollens.birch.omPct, 92);
+  const birch = days[0].pollens.birch;
+  assert.equal(birch.level, 'low');
+  assert.equal(birch.display, '1');
+  assert.equal(birch.unit, '/ 3');
+  assert.equal(birch.pct, 33);
+  assert.equal(birch.source, 'dwd');
+  assert.equal(birch.omDisplay, undefined);
+  assert.deepEqual(pollenDisplay(birch), { value: '1', unit: '/ 3', pct: 33 });
 });
 
-test('buildDays: DWD entries with no Open-Meteo coverage for that pollen have no omDisplay', () => {
-  // hazel/ash/plane/rye aren't tracked by Open-Meteo at all (POLLEN[].om
-  // is null for them) — there's no K/m³ figure to fall back to, so these
-  // stay on DWD's native 0-3 scale.
+test('buildDays: DWD entries with no Open-Meteo coverage stay on the DWD scale', () => {
   const dwdDays = [{ date: '2026-08-09', dwd: { hazel: { level: 'low', display: '1', unit: '/ 3', source: 'dwd' } } }];
   const days = buildDays(dwdDays, null, null);
-  assert.equal(days[0].pollens.hazel.omDisplay, undefined);
   assert.equal(days[0].pollens.hazel.display, '1');
+  assert.equal(days[0].pollens.hazel.unit, '/ 3');
 });
 
 test('buildDays: always produces at least 3 days even with no data', () => {
@@ -228,9 +264,9 @@ test('buildDays: always produces at least 3 days even with no data', () => {
   assert.equal(days[0].pollens.birch, null);
 });
 
-test('pollenDisplay: prefers omDisplay/omPct over the native display/pct', () => {
+test('pollenDisplay: ignores a legacy omDisplay so the figure matches entry.level', () => {
   const entry = { level: 'medium', display: '1.5', unit: '/ 3', pct: 50, omDisplay: '45', omPct: 43 };
-  assert.deepEqual(pollenDisplay(entry), { value: '45', unit: 'K/m³', pct: 43 });
+  assert.deepEqual(pollenDisplay(entry), { value: '1.5', unit: '/ 3', pct: 50 });
 });
 
 test('pollenDisplay: falls back to the native display/unit/pct when there is no omDisplay', () => {
@@ -253,15 +289,24 @@ test('diffTodayPollens: flags a level change even if the level text differs but 
   assert.equal(changes[0].currValue, '2 / 3');
 });
 
-test('diffTodayPollens: flags a value change even when the level stays the same', () => {
-  // Same severity bucket, but a different concentration — the user's
-  // explicit requirement: notify on ANY value change, not just level.
-  const prev = { grass: { level: 'medium', omDisplay: '45', omPct: 43 } };
-  const curr = { grass: { level: 'medium', omDisplay: '48', omPct: 45 } };
-  const changes = diffTodayPollens(prev, curr);
-  assert.equal(changes.length, 1);
-  assert.equal(changes[0].prevValue, '45 K/m³');
-  assert.equal(changes[0].currValue, '48 K/m³');
+test('diffTodayPollens: a value change inside the same level is not a change', () => {
+  const prev = { grass: { level: 'medium', display: '45', unit: 'K/m³', pct: 43 } };
+  const curr = { grass: { level: 'medium', display: '48', unit: 'K/m³', pct: 45 } };
+  assert.deepEqual(diffTodayPollens(prev, curr), []);
+});
+
+test('diffTodayPollens: a drop in level is not a change', () => {
+  const prev = { grass: { level: 'high', display: '80', unit: 'K/m³', pct: 80 } };
+  const curr = { grass: { level: 'low', display: '5', unit: 'K/m³', pct: 20 } };
+  assert.deepEqual(diffTodayPollens(prev, curr), []);
+});
+
+test('diffTodayPollens: keys filter and skipKeys limit who can rise', () => {
+  const prev = { grass: { level: 'low', display: '5', unit: 'K/m³' }, birch: { level: 'none', display: '0', unit: 'K/m³' } };
+  const curr = { grass: { level: 'high', display: '80', unit: 'K/m³' }, birch: { level: 'low', display: '20', unit: 'K/m³' } };
+  assert.deepEqual(diffTodayPollens(prev, curr, { keys: ['birch'] }).map((c) => c.key), ['birch']);
+  assert.deepEqual(diffTodayPollens(prev, curr, { skipKeys: ['grass'] }).map((c) => c.key), ['birch']);
+  assert.deepEqual(diffTodayPollens(prev, curr, { keys: ['grass'], skipKeys: ['grass'] }), []);
 });
 
 test('diffTodayPollens: identical data -> no changes', () => {
@@ -269,9 +314,9 @@ test('diffTodayPollens: identical data -> no changes', () => {
   assert.deepEqual(diffTodayPollens(pollens, pollens), []);
 });
 
-test('diffTodayPollens: a pollen appearing for the first time counts as a change', () => {
+test('diffTodayPollens: a pollen appearing above "none" for the first time counts as an increase', () => {
   const prev = { ragweed: null };
-  const curr = { ragweed: { level: 'low', omDisplay: '3', omPct: 10 } };
+  const curr = { ragweed: { level: 'low', display: '3', unit: 'K/m³', pct: 10 } };
   const changes = diffTodayPollens(prev, curr);
   assert.equal(changes.length, 1);
   assert.equal(changes[0].prevValue, null);
