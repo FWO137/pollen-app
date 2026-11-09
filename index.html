@@ -2092,6 +2092,10 @@
   } else {
     requestGeo();
   }
+  // Push the allergen filter and place already stored on this device.
+  // No-op until a subscription exists; an update does not repeat the
+  // "Benachrichtigungen aktiviert" confirmation.
+  syncPushSubscription();
   } // end: window.PollenLogic guard
   </script>
 </body>
