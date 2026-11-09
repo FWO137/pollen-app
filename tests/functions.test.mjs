@@ -27,9 +27,15 @@ function fakeGetStore(name) {
 }
 
 const sentPushes = [];
+const failEndpoints = new Set();
 const fakeWebpush = {
   setVapidDetails() {},
   async sendNotification(subscription, payload) {
+    if (failEndpoints.has(subscription.endpoint)) {
+      const err = new Error('push failed');
+      err.statusCode = 500;
+      throw err;
+    }
     sentPushes.push({ subscription, payload: JSON.parse(payload) });
   },
 };
@@ -78,6 +84,7 @@ test('subscribe: stores a valid subscription and sends a confirmation push', asy
   const stored = await store.get(blobs[0].key);
   assert.equal(stored.locationName, 'Pfarrkirchen');
   assert.equal(stored.location.lat, 48.4320);
+  assert.equal(stored.allergens, null); // omitted field = every pollen
 
   assert.equal(sentPushes.length, 1);
   assert.match(sentPushes[0].payload.body, /Pfarrkirchen/);
@@ -168,6 +175,240 @@ test('check-pollen: second run with a changed value sends a push with the new va
   assert.match(sentPushes[0].payload.body, /Gräser/);
   assert.match(sentPushes[0].payload.body, /45 K\/m³/);
   console.log('Notification sent:', sentPushes[0].payload);
+});
+
+test('check-pollen: a further rise or a same-level wiggle the same day does not notify again', async () => {
+  // The München subscription above was just notified for grass low → medium.
+  // One pollen, one push per day — even if it later climbs another bucket.
+  const realFetch = globalThis.fetch;
+  const respond = (grass) => async (url) => {
+    if (String(url).includes('opendata.dwd.de')) {
+      return { ok: true, json: async () => ({ last_update: '2026-08-17 11:00', content: [] }) };
+    }
+    if (String(url).includes('air-quality-api.open-meteo.com')) {
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            grass_pollen: [grass], alder_pollen: [0], birch_pollen: [0],
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ measurements: [] }) };
+  };
+
+  sentPushes.length = 0;
+  globalThis.fetch = respond(48); // still medium
+  let res = await checkPollenHandler();
+  globalThis.fetch = realFetch;
+  assert.equal((await res.json())[0].status, 'no-change');
+  assert.equal(sentPushes.length, 0);
+
+  globalThis.fetch = respond(250); // very-high, second increase today
+  res = await checkPollenHandler();
+  globalThis.fetch = realFetch;
+  assert.equal((await res.json())[0].status, 'no-change');
+  assert.equal(sentPushes.length, 0);
+});
+
+test('check-pollen: a failed delivery does not advance the snapshot, and the retry does not double-send', async () => {
+  const subsStore = fakeGetStore('push-subscriptions');
+  await subsStore.setJSON('sub-retry', {
+    subscription: { endpoint: 'https://push.example/retry', keys: { p256dh: 'p', auth: 'a' } },
+    location: { lat: 47.07, lon: 15.44, country: 'AT', dwd: null, lgl: null },
+    locationName: 'Graz',
+  });
+  await subsStore.setJSON('sub-retry-2', {
+    subscription: { endpoint: 'https://push.example/retry-2', keys: { p256dh: 'p', auth: 'a' } },
+    location: { lat: 47.07, lon: 15.44, country: 'AT', dwd: null, lgl: null },
+    locationName: 'Graz',
+  });
+
+  const realFetch = globalThis.fetch;
+  const respond = (grass) => async (url) => {
+    if (String(url).includes('air-quality-api.open-meteo.com')) {
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            grass_pollen: [grass], alder_pollen: [0], birch_pollen: [0],
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ last_update: '2026-08-17 11:00', content: [], measurements: [] }) };
+  };
+
+  globalThis.fetch = respond(0);
+  await checkPollenHandler(); // baseline
+  globalThis.fetch = realFetch;
+
+  failEndpoints.add('https://push.example/retry'); // the other Graz subscriber still succeeds
+  const grazPushes = () => sentPushes.filter((p) => p.payload.title.includes('Graz'));
+  sentPushes.length = 0;
+  globalThis.fetch = respond(45);
+  let res = await checkPollenHandler();
+  globalThis.fetch = realFetch;
+  const failed = (await res.json()).find((r) => String(r.sig).startsWith('47.07'));
+  assert.equal(failed.status, 'delivery-failed');
+  assert.equal(grazPushes().length, 1);
+
+  failEndpoints.clear();
+  sentPushes.length = 0;
+  globalThis.fetch = respond(45);
+  res = await checkPollenHandler();
+  globalThis.fetch = realFetch;
+  const retried = (await res.json()).find((r) => String(r.sig).startsWith('47.07'));
+  assert.equal(retried.status, 'notified');
+  assert.equal(grazPushes().length, 1, 'only the subscriber who missed the first attempt');
+  assert.equal(grazPushes()[0].subscription.endpoint, 'https://push.example/retry');
+});
+
+test('check-pollen: allergen filter drops unrelated rises, and a far ePIN station is not used', async () => {
+  const subsStore = fakeGetStore('push-subscriptions');
+  await subsStore.setJSON('sub-birch-only', {
+    subscription: { endpoint: 'https://push.example/birch-only', keys: { p256dh: 'p', auth: 'a' } },
+    location: { lat: 48.2082, lon: 16.3738, country: 'AT', dwd: null, lgl: null },
+    locationName: 'Wien',
+    allergens: ['birch'],
+  });
+  // Ingolstadt used to be pinned to the Munich trap (~70 km). A spike at
+  // DEMUNC must not become this city's forecast.
+  await subsStore.setJSON('sub-ingolstadt', {
+    subscription: { endpoint: 'https://push.example/ingolstadt', keys: { p256dh: 'p', auth: 'a' } },
+    location: { lat: 48.7665, lon: 11.4258, country: 'DE', dwd: 121, lgl: 'DEMUNC' },
+    locationName: 'Ingolstadt',
+  });
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('epin.lgl')) {
+      return {
+        ok: true,
+        json: async () => ({
+          measurements: [{ location: 'DEMUNC', polle: 'Poaceae', data: [{ value: 5000, to: 1 }] }],
+        }),
+      };
+    }
+    if (u.includes('air-quality-api.open-meteo.com')) {
+      const lat = Number(new URL(u).searchParams.get('latitude'));
+      const birch = lat > 48.5 ? 0 : 0; // both baseline
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            grass_pollen: [0], alder_pollen: [0], birch_pollen: [birch],
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ last_update: '2026-08-17 11:00', content: [] }) };
+  };
+  await checkPollenHandler();
+  globalThis.fetch = realFetch;
+
+  sentPushes.length = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('epin.lgl')) {
+      return {
+        ok: true,
+        json: async () => ({
+          measurements: [{ location: 'DEMUNC', polle: 'Poaceae', data: [{ value: 5000, to: 1 }] }],
+        }),
+      };
+    }
+    if (u.includes('air-quality-api.open-meteo.com')) {
+      const lat = Number(new URL(u).searchParams.get('latitude'));
+      const isVienna = lat < 48.5;
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            // Vienna: grass rises (not in this subscriber's allergens), birch stays none.
+            // Ingolstadt: grass stays 0. If DEMUNC were applied it would be very-high.
+            grass_pollen: [isVienna ? 45 : 0], alder_pollen: [0], birch_pollen: [0],
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ last_update: '2026-08-17 11:00', content: [] }) };
+  };
+  await checkPollenHandler();
+  globalThis.fetch = realFetch;
+  assert.equal(sentPushes.length, 0);
+
+  const historyRes = await historyHandler(getRequest('http://localhost/x?lat=48.7665&lon=11.4258'));
+  const { history } = await historyRes.json();
+  assert.equal(history.at(-1).pollens.grass.level, 'none');
+  assert.notEqual(history.at(-1).pollens.grass.source, 'lgl');
+
+  sentPushes.length = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('air-quality-api.open-meteo.com')) {
+      return {
+        ok: true,
+        json: async () => ({
+          hourly: {
+            time: [new Date().toISOString()],
+            grass_pollen: [45], alder_pollen: [0], birch_pollen: [100],
+            mugwort_pollen: [0], ragweed_pollen: [0], olive_pollen: [0],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ last_update: '2026-08-17 11:00', content: [], measurements: [] }) };
+  };
+  await checkPollenHandler();
+  globalThis.fetch = realFetch;
+  const viennaPush = sentPushes.find((p) => p.payload.title.includes('Wien'));
+  assert.ok(viennaPush, 'birch rise is delivered to the birch-only subscriber');
+  assert.match(viennaPush.payload.body, /Birke/);
+  assert.doesNotMatch(viennaPush.payload.body, /Gräser/);
+  assert.match(viennaPush.payload.body, /Hohe Belastung/); // birch, not the unselected grass
+});
+
+test('subscribe: stores a normalized allergen selection', async () => {
+  const payload = {
+    subscription: { endpoint: 'https://push.example/allergens', keys: { p256dh: 'p', auth: 'a' } },
+    location: { lat: 48.14, lon: 11.58, country: 'DE', dwd: 121, lgl: 'DEMUNC' },
+    locationName: 'München',
+    allergens: ['grass', 'nope', 'birch', 'grass'],
+  };
+  const res = await subscribeHandler(jsonRequest(payload));
+  assert.equal(res.status, 200);
+  const store = fakeGetStore('push-subscriptions');
+  const { blobs } = await store.list();
+  let found = null;
+  for (const { key } of blobs) {
+    const row = await store.get(key);
+    if (row?.subscription?.endpoint === payload.subscription.endpoint) found = row;
+  }
+  assert.deepEqual(found.allergens, ['birch', 'grass']);
+
+  sentPushes.length = 0;
+  const again = await subscribeHandler(jsonRequest({ ...payload, locationName: 'Schwabing', allergens: ['birch'] }));
+  assert.equal(again.status, 200);
+  assert.equal(sentPushes.length, 0, 'updating an existing subscription does not repeat the confirmation push');
+  let updated = null;
+  for (const { key } of (await store.list()).blobs) {
+    const row = await store.get(key);
+    if (row?.subscription?.endpoint === payload.subscription.endpoint) updated = row;
+  }
+  assert.equal(updated.locationName, 'Schwabing');
+  assert.deepEqual(updated.allergens, ['birch']);
+  assert.equal(updated.createdAt, found.createdAt);
 });
 
 test('history: GET rejects missing/invalid lat/lon', async () => {
